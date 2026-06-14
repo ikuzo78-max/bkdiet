@@ -28,6 +28,153 @@
   <script type="text/babel">
 const { useState, useEffect } = React;
 
+// 음식 DB: [100g당 kcal, 1인분 기준 g]
+const FOOD_DB = {
+  // 밥류
+  "흰쌀밥": [130, 210], "현미밥": [124, 210], "잡곡밥": [127, 210], "볶음밥": [180, 230],
+  "비빔밥": [500, 350], "주먹밥": [170, 100], "김밥": [160, 240], "삼각김밥": [170, 100],
+  "오므라이스": [190, 300], "덮밥": [160, 350], "카레라이스": [155, 350],
+  // 면류
+  "라면": [450, 120], "짜장면": [160, 420], "짬뽕": [120, 470], "우동": [100, 400],
+  "냉면": [100, 500], "스파게티": [140, 370], "떡볶이": [140, 270],
+  "칼국수": [110, 400], "비빔국수": [130, 350], "잔치국수": [100, 380],
+  // 국/찌개
+  "된장찌개": [40, 300], "김치찌개": [50, 300], "순두부찌개": [55, 300],
+  "설렁탕": [60, 500], "삼계탕": [90, 800], "미역국": [25, 300],
+  "콩나물국": [20, 300], "갈비탕": [80, 500], "부대찌개": [70, 400],
+  "된장국": [30, 200], "황태국": [35, 300],
+  // 고기류
+  "삼겹살": [331, 150], "목살": [259, 150], "불고기": [150, 200],
+  "닭갈비": [130, 250], "제육볶음": [180, 200], "갈비찜": [200, 200],
+  "닭볶음탕": [120, 300], "보쌈": [230, 150], "족발": [230, 200],
+  "불족발": [240, 200], "수육": [220, 150], "닭가슴살": [109, 100],
+  "소불고기": [150, 200], "LA갈비": [280, 150], "스테이크": [250, 200],
+  "돼지갈비": [280, 200], "닭튀김": [250, 100], "치킨": [230, 200],
+  "후라이드치킨": [230, 200], "양념치킨": [240, 200],
+  // 생선/해산물
+  "생선구이": [130, 200], "고등어구이": [180, 150], "삼치구이": [150, 150],
+  "조기구이": [100, 150], "오징어볶음": [100, 200], "낙지볶음": [80, 200],
+  "새우볶음": [100, 150], "참치캔": [100, 100], "연어": [180, 100],
+  // 두부/채소
+  "두부조림": [85, 200], "순두부": [50, 200], "시금치나물": [30, 100],
+  "콩나물무침": [25, 100], "나물": [30, 100], "쌈야채": [15, 100],
+  "김치": [20, 100], "깍두기": [22, 100], "오이무침": [20, 100],
+  "도라지무침": [40, 100], "계란후라이": [100, 60], "계란찜": [70, 150],
+  "계란말이": [120, 100],
+  // 빵/분식
+  "식빵": [260, 30], "크로와상": [400, 60], "도넛": [380, 75],
+  "머핀": [380, 90], "베이글": [250, 100], "모닝빵": [260, 45],
+  "피자": [260, 100], "핫도그": [270, 115], "샌드위치": [200, 150],
+  "토스트": [250, 100],
+  // 패스트푸드
+  "햄버거": [250, 200], "치즈버거": [290, 200], "빅맥": [500, 200],
+  "감자튀김": [312, 110], "너겟": [260, 100],
+  // 간식/과자
+  "과자": [500, 40], "초콜릿": [530, 30], "아이스크림": [200, 100],
+  "젤리": [330, 30], "사탕": [400, 10], "팝콘": [400, 50],
+  "케이크": [350, 100], "쿠키": [480, 30], "마카롱": [400, 35],
+  // 과일
+  "사과": [52, 200], "바나나": [86, 120], "포도": [67, 200],
+  "오렌지": [47, 200], "수박": [30, 300], "딸기": [33, 150],
+  "복숭아": [40, 200], "배": [42, 250], "키위": [61, 100],
+  "망고": [65, 200], "귤": [43, 100], "블루베리": [57, 100],
+  // 음료
+  "아메리카노": [5, 300], "카페라떼": [65, 300], "카푸치노": [75, 250],
+  "녹차": [2, 200], "콜라": [42, 250], "사이다": [40, 250],
+  "주스": [45, 200], "우유": [61, 200], "두유": [46, 200],
+  "맥주": [43, 355], "소주": [140, 50], "막걸리": [49, 200],
+  "에너지드링크": [45, 250], "이온음료": [25, 500],
+  // 샐러드
+  "샐러드": [20, 200], "닭가슴살샐러드": [80, 300], "시저샐러드": [100, 300],
+  "그릭요거트": [59, 200], "요거트": [60, 100],
+  // 기타
+  "두유": [46, 200], "프로틴쉐이크": [120, 300], "견과류": [600, 30],
+  "땅콩": [567, 30], "아몬드": [579, 30],
+};
+
+// 용량 파싱 함수
+function parseQuantity(input) {
+  const text = input.trim().toLowerCase();
+  // g, kg
+  const gMatch = text.match(/(\d+\.?\d*)\s*g/);
+  if (gMatch) return { type: 'g', amount: parseFloat(gMatch[1]) };
+  const kgMatch = text.match(/(\d+\.?\d*)\s*kg/);
+  if (kgMatch) return { type: 'g', amount: parseFloat(kgMatch[1]) * 1000 };
+  // ml, l
+  const mlMatch = text.match(/(\d+\.?\d*)\s*ml/);
+  if (mlMatch) return { type: 'ml', amount: parseFloat(mlMatch[1]) };
+  // 분수: 1/2, 1/3
+  const fracMatch = text.match(/(\d+)\/(\d+)/);
+  if (fracMatch) return { type: 'serving', amount: parseInt(fracMatch[1]) / parseInt(fracMatch[2]) };
+  // 숫자+단위
+  const numMatch = text.match(/(\d+\.?\d*)\s*(개|그릇|공기|인분|조각|캔|컵|잔|장|봉|판|줄|입|쪽|토막|마리)?/);
+  if (numMatch && numMatch[1]) return { type: 'serving', amount: parseFloat(numMatch[1]) };
+  // 한글 수량
+  if (text.includes('반') || text.includes('절반')) return { type: 'serving', amount: 0.5 };
+  if (text.includes('두') || text.includes('2')) return { type: 'serving', amount: 2 };
+  return { type: 'serving', amount: 1 };
+}
+
+function calcCalories(foodName, quantityStr) {
+  // DB에서 음식 찾기 (부분 매칭)
+  let found = null;
+  let foundKey = null;
+  for (const key of Object.keys(FOOD_DB)) {
+    if (foodName.includes(key) || key.includes(foodName)) {
+      found = FOOD_DB[key];
+      foundKey = key;
+      break;
+    }
+  }
+  if (!found) return null;
+
+  const [kcalPer100g, servingG] = found;
+  const qty = parseQuantity(quantityStr || "1인분");
+
+  let cal;
+  if (qty.type === 'g' || qty.type === 'ml') {
+    cal = Math.round(kcalPer100g * qty.amount / 100);
+  } else {
+    cal = Math.round(kcalPer100g * servingG / 100 * qty.amount);
+  }
+  return { name: `${foundKey}${quantityStr ? ' ' + quantityStr.trim() : ''}`, calories: cal };
+}
+
+// 자유 텍스트 파싱: "주먹밥 1/2, 불족발 200g, 미역국, 쌈야채 100g"
+function parseAndCalc(text) {
+  const items = text.split(/[,，、\n]+/).map(s => s.trim()).filter(Boolean);
+  const results = [];
+  const unknown = [];
+
+  for (const item of items) {
+    // 음식명과 용량 분리
+    // 패턴: 음식명 + 숫자/단위 or 분수
+    const match = item.match(/^([가-힣a-zA-Z\s]+?)\s*([\d\/\.]+\s*(?:g|kg|ml|l|개|그릇|공기|인분|조각|캔|컵|잔|장|봉|판|줄|입|쪽|토막|마리|반|절반)?)?$/);
+    
+    let foodName = item;
+    let qtyStr = "";
+    
+    if (match) {
+      foodName = match[1].trim();
+      qtyStr = match[2] ? match[2].trim() : "";
+    }
+
+    // 반/절반이 음식명에 붙은 경우
+    const halfMatch = foodName.match(/^(.+?)\s*(반|1\/2)$/);
+    if (halfMatch) {
+      foodName = halfMatch[1].trim();
+      qtyStr = "1/2";
+    }
+
+    const result = calcCalories(foodName, qtyStr);
+    if (result) {
+      results.push(result);
+    } else {
+      unknown.push(item);
+    }
+  }
+  return { results, unknown };
+}
 
 const EXERCISE_DB = {
   "걷기": 4, "빠른 걷기": 6, "조깅": 8, "달리기": 11,
@@ -88,12 +235,11 @@ function App() {
   const [data, setData] = useState({});
   const [currentDate, setCurrentDate] = useState(getTodayStr());
   const [tab, setTab] = useState("sleep");
-  const [aiInput, setAiInput] = useState("");
-  const [aiMeal, setAiMeal] = useState("아침");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState(null); // [{name, calories}]
-  const [aiError, setAiError] = useState("");
-  const [showAiModal, setShowAiModal] = useState(false);
+  const [foodInput, setFoodInput] = useState("");
+  const [foodMeal, setFoodMeal] = useState("아침");
+  const [foodResult, setFoodResult] = useState(null);
+  const [foodUnknown, setFoodUnknown] = useState([]);
+  const [showFoodModal, setShowFoodModal] = useState(false);
   const [exerciseForm, setExerciseForm] = useState({ type: "걷기", duration: 30, custom: false, customName: "", customMet: 6 });
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -137,36 +283,20 @@ function App() {
   };
   const removeFood = (mealType, id) => updateDay(d => { d.meals[mealType] = d.meals[mealType].filter(f => f.id !== id); return d; });
 
-  const analyzeFood = async () => {
-    if (!aiInput.trim()) return;
-    setAiLoading(true); setAiError(""); setAiResult(null);
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: `다음 식사 내용의 각 음식별 칼로리를 추정해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 쓰지 마.\n\n입력: "${aiInput}"\n\n형식: [{"name":"음식명(양 포함)","calories":숫자}, ...]\n\n규칙:\n- 양이 명시되면 그 양 기준으로 계산\n- 1/2이면 절반 칼로리\n- g 단위면 그램 기준\n- 명시 없으면 1인분 기준\n- calories는 정수`
-          }]
-        })
-      });
-      const data = await res.json();
-      const text = data.content?.[0]?.text || "";
-      const clean = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
-      setAiResult(parsed);
-    } catch(e) {
-      setAiError("분석 실패. 다시 시도해주세요.");
-    }
-    setAiLoading(false);
+  const analyzeFood = () => {
+    if (!foodInput.trim()) return;
+    const { results, unknown } = parseAndCalc(foodInput);
+    setFoodResult(results);
+    setFoodUnknown(unknown);
   };
 
-  const confirmAiResult = () => {
-    addFoodItems(aiMeal, aiResult);
-    setAiInput(""); setAiResult(null); setShowAiModal(false);
+  const confirmResult = () => {
+    if (foodResult && foodResult.length > 0) addFoodItems(foodMeal, foodResult);
+    setFoodInput(""); setFoodResult(null); setFoodUnknown([]);
+  };
+
+  const updateUnknownCal = (idx, cal) => {
+    setFoodResult(prev => prev.map((item, i) => i === idx ? {...item, calories: Number(cal)} : item));
   };
 
   const addExercise = () => {
@@ -312,53 +442,65 @@ function App() {
                 })}
               </div>
             </Card>
-            {/* AI 입력 카드 */}
+            {/* 입력 카드 */}
             <Card style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: "#a5b4fc", fontWeight: 700, marginBottom: 10 }}>✨ AI 칼로리 분석</div>
+              <div style={{ fontSize: 13, color: "#a5b4fc", fontWeight: 700, marginBottom: 10 }}>🍽️ 식사 입력</div>
               <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
                 {MEAL_TYPES.map(mt => (
-                  <div key={mt} onClick={() => setAiMeal(mt)}
+                  <div key={mt} onClick={() => setFoodMeal(mt)}
                     style={{ flex: 1, textAlign: "center", padding: "6px 4px", borderRadius: 8, cursor: "pointer", fontSize: 12,
-                      background: aiMeal === mt ? "#312e81" : "#12141f",
-                      border: `1px solid ${aiMeal === mt ? "#7b8cde" : "#2d3052"}`,
-                      color: aiMeal === mt ? "#a5b4fc" : "#4b5280", fontWeight: aiMeal === mt ? 700 : 400 }}>
+                      background: foodMeal === mt ? "#312e81" : "#12141f",
+                      border: `1px solid ${foodMeal === mt ? "#7b8cde" : "#2d3052"}`,
+                      color: foodMeal === mt ? "#a5b4fc" : "#4b5280", fontWeight: foodMeal === mt ? 700 : 400 }}>
                     {MEAL_ICONS[mt]}{mt}
                   </div>
                 ))}
               </div>
               <textarea
-                placeholder={"먹은 음식을 자유롭게 입력하세요\n예) 주먹밥 1/2, 미역국, 쌈야채, 불족발 200g"}
-                value={aiInput}
-                onChange={e => { setAiInput(e.target.value); setAiResult(null); setAiError(""); }}
+                placeholder={"음식명과 양을 입력하세요 (쉼표로 구분)\n예) 주먹밥 1/2, 불족발 200g, 미역국, 쌈야채 100g"}
+                value={foodInput}
+                onChange={e => { setFoodInput(e.target.value); setFoodResult(null); setFoodUnknown([]); }}
                 rows={3}
                 style={{ ...inputStyle, resize: "none", lineHeight: 1.6 }}
               />
-              {aiError && <div style={{ fontSize: 12, color: "#f87171", marginTop: 6 }}>{aiError}</div>}
-              {aiResult && (
+              <div style={{ fontSize: 11, color: "#4b5280", marginTop: 6, lineHeight: 1.6 }}>
+                💡 g, 1/2, 반공기, 1그릇, 2개 등 다양한 단위 인식
+              </div>
+
+              {/* 결과 */}
+              {foodResult && (
                 <div style={{ marginTop: 10, background: "#0f1117", borderRadius: 10, padding: 12, border: "1px solid #2d3052" }}>
-                  <div style={{ fontSize: 12, color: "#7b8cde", marginBottom: 8 }}>📋 분석 결과 — {aiMeal}</div>
-                  {aiResult.map((item, i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: i < aiResult.length-1 ? "1px solid #1e2035" : "none" }}>
+                  <div style={{ fontSize: 12, color: "#7b8cde", marginBottom: 8 }}>📋 계산 결과 — {foodMeal}</div>
+                  {foodResult.map((item, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < foodResult.length-1 ? "1px solid #1e2035" : "none" }}>
                       <span style={{ fontSize: 13 }}>{item.name}</span>
                       <span style={{ fontSize: 13, color: "#f97316", fontWeight: 700 }}>{item.calories} kcal</span>
                     </div>
                   ))}
+                  {foodUnknown.length > 0 && (
+                    <div style={{ marginTop: 8, padding: "8px", background: "#1e2035", borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: "#facc15", marginBottom: 4 }}>⚠️ 인식 못한 음식 (DB에 없음)</div>
+                      {foodUnknown.map((u, i) => (
+                        <div key={i} style={{ fontSize: 12, color: "#7b8cde" }}>{u}</div>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid #2d3052" }}>
                     <span style={{ fontSize: 13, fontWeight: 700 }}>합계</span>
-                    <span style={{ fontSize: 15, color: "#f97316", fontWeight: 800 }}>{aiResult.reduce((s,i)=>s+i.calories,0)} kcal</span>
+                    <span style={{ fontSize: 15, color: "#f97316", fontWeight: 800 }}>{foodResult.reduce((s,i)=>s+i.calories,0)} kcal</span>
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                    <button onClick={() => { setAiResult(null); setAiInput(""); }} style={{ flex: 1, background: "#1e2035", border: "1px solid #2d3052", borderRadius: 8, color: "#7b8cde", padding: "8px", fontSize: 13, cursor: "pointer" }}>취소</button>
-                    <button onClick={confirmAiResult} style={{ flex: 2, background: "linear-gradient(135deg,#312e81,#1e40af)", border: "none", borderRadius: 8, color: "#e8eaf0", padding: "8px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ {aiMeal}에 추가</button>
+                    <button onClick={() => { setFoodResult(null); setFoodInput(""); }} style={{ flex: 1, background: "#1e2035", border: "1px solid #2d3052", borderRadius: 8, color: "#7b8cde", padding: "8px", fontSize: 13, cursor: "pointer" }}>취소</button>
+                    <button onClick={confirmResult} disabled={foodResult.length === 0} style={{ flex: 2, background: "linear-gradient(135deg,#312e81,#1e40af)", border: "none", borderRadius: 8, color: "#e8eaf0", padding: "8px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ {foodMeal}에 추가</button>
                   </div>
                 </div>
               )}
-              {!aiResult && (
-                <button onClick={analyzeFood} disabled={aiLoading || !aiInput.trim()}
-                  style={{ width: "100%", marginTop: 10, background: aiLoading || !aiInput.trim() ? "#1e2035" : "linear-gradient(135deg,#312e81,#1e40af)",
-                    border: "none", borderRadius: 10, color: aiLoading || !aiInput.trim() ? "#4b5280" : "#e8eaf0",
-                    padding: "11px", fontSize: 14, fontWeight: 700, cursor: aiLoading || !aiInput.trim() ? "default" : "pointer" }}>
-                  {aiLoading ? "🤖 AI 분석 중..." : "🔍 칼로리 분석"}
+              {!foodResult && (
+                <button onClick={analyzeFood} disabled={!foodInput.trim()}
+                  style={{ width: "100%", marginTop: 10, background: !foodInput.trim() ? "#1e2035" : "linear-gradient(135deg,#312e81,#1e40af)",
+                    border: "none", borderRadius: 10, color: !foodInput.trim() ? "#4b5280" : "#e8eaf0",
+                    padding: "11px", fontSize: 14, fontWeight: 700, cursor: !foodInput.trim() ? "default" : "pointer" }}>
+                  🔍 칼로리 계산
                 </button>
               )}
             </Card>
