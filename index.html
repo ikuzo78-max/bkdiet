@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f1117" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="헬스트래커" />
+  <title>헬스트래커</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { background: #0f1117; color: #e8eaf0; font-family: 'Noto Sans KR', -apple-system, sans-serif; overscroll-behavior: none; }
+    input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #0f1117; } ::-webkit-scrollbar-thumb { background: #2d3052; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+const { useState, useEffect } = React;
+
+
+const EXERCISE_DB = {
+  "걷기": 4, "빠른 걷기": 6, "조깅": 8, "달리기": 11,
+  "자전거": 7, "수영": 9, "등산": 8, "요가": 3,
+  "필라테스": 4, "헬스(웨이트)": 6, "HIIT": 10, "줄넘기": 10,
+  "배드민턴": 6, "테니스": 7, "농구": 8, "축구": 9,
+  "스트레칭": 2, "댄스": 6,
+};
+
+const MEAL_TYPES = ["아침", "점심", "저녁", "간식"];
+const MEAL_ICONS = { "아침": "🌅", "점심": "☀️", "저녁": "🌙", "간식": "🍎" };
+
+function getTodayStr() { return new Date().toISOString().slice(0, 10); }
+function formatDate(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
+}
+function getDefaultDay() {
+  return { sleep: { bedtime: "", wakeup: "", duration: null }, meals: { 아침: [], 점심: [], 저녁: [], 간식: [] }, exercises: [], notes: "" };
+}
+function calcSleepDuration(bedtime, wakeup) {
+  if (!bedtime || !wakeup) return null;
+  const [bh, bm] = bedtime.split(":").map(Number);
+  const [wh, wm] = wakeup.split(":").map(Number);
+  let mins = (wh * 60 + wm) - (bh * 60 + bm);
+  if (mins < 0) mins += 24 * 60;
+  return mins;
+}
+function minsToHM(mins) {
+  if (mins == null) return "--";
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h}시간 ${m > 0 ? m + "분" : ""}`;
+}
+function getSleepQuality(mins) {
+  if (mins == null) return null;
+  if (mins >= 420 && mins <= 540) return { label: "최적", color: "#4ade80", emoji: "😊" };
+  if (mins >= 360 && mins < 420) return { label: "보통", color: "#facc15", emoji: "😐" };
+  if (mins > 540) return { label: "과다", color: "#60a5fa", emoji: "😴" };
+  return { label: "부족", color: "#f87171", emoji: "😵" };
+}
+
+const inputStyle = { width: "100%", background: "#0f1117", border: "1px solid #2d3052", borderRadius: 10, color: "#e8eaf0", padding: "10px 12px", fontSize: 14, outline: "none", boxSizing: "border-box" };
+const addBtnStyle = { background: "#312e81", border: "1px solid #4338ca", borderRadius: 8, color: "#a5b4fc", fontSize: 12, fontWeight: 700, padding: "5px 10px", cursor: "pointer" };
+const foodItemStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#12141f", borderRadius: 10, padding: "10px 12px", marginBottom: 6, border: "1px solid #1e2035" };
+const removeBtnStyle = { background: "none", border: "none", color: "#4b5280", fontSize: 14, cursor: "pointer", padding: 2 };
+
+function SectionTitle({ children, style: s }) {
+  return <div style={{ fontSize: 13, fontWeight: 700, color: "#4b5280", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase", ...s }}>{children}</div>;
+}
+function Card({ children, style: s }) {
+  return <div style={{ background: "#1a1d2e", borderRadius: 14, padding: 16, border: "1px solid #1e2035", ...s }}>{children}</div>;
+}
+function Label({ children }) {
+  return <div style={{ fontSize: 11, color: "#7b8cde", marginBottom: 6, fontWeight: 600 }}>{children}</div>;
+}
+
+function App() {
+  const [data, setData] = useState({});
+  const [currentDate, setCurrentDate] = useState(getTodayStr());
+  const [tab, setTab] = useState("sleep");
+  const [aiInput, setAiInput] = useState("");
+  const [aiMeal, setAiMeal] = useState("아침");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState(null); // [{name, calories}]
+  const [aiError, setAiError] = useState("");
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [exerciseForm, setExerciseForm] = useState({ type: "걷기", duration: 30, custom: false, customName: "", customMet: 6 });
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("healthData");
+    if (saved) try { setData(JSON.parse(saved)); } catch(e) {}
+  }, []);
+
+  const save = (newData) => { setData(newData); localStorage.setItem("healthData", JSON.stringify(newData)); };
+  const getDay = (date = currentDate) => data[date] || getDefaultDay();
+  const updateDay = (updater) => {
+    const day = getDay();
+    const updated = updater(JSON.parse(JSON.stringify(day)));
+    save({ ...data, [currentDate]: updated });
+  };
+
+  const day = getDay();
+  const sleepMins = day.sleep.duration ?? calcSleepDuration(day.sleep.bedtime, day.sleep.wakeup);
+  const sleepQuality = getSleepQuality(sleepMins);
+
+  const updateSleep = (field, val) => updateDay(d => {
+    d.sleep[field] = val;
+    if (field === "bedtime" || field === "wakeup")
+      d.sleep.duration = calcSleepDuration(field === "bedtime" ? val : d.sleep.bedtime, field === "wakeup" ? val : d.sleep.wakeup);
+    return d;
+  });
+
+  const totalCalories = MEAL_TYPES.reduce((sum, mt) => sum + (day.meals[mt] || []).reduce((s, f) => s + f.calories, 0), 0);
+  const totalBurnedCal = (day.exercises || []).reduce((sum, e) => sum + e.burned, 0);
+  const netCalories = totalCalories - totalBurnedCal;
+
+  const addFoodItems = (mealType, items) => {
+    updateDay(d => {
+      if (!d.meals[mealType]) d.meals[mealType] = [];
+      const time = new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+      items.forEach(item => {
+        d.meals[mealType].push({ id: Date.now() + Math.random(), name: item.name, calories: Number(item.calories), time });
+      });
+      return d;
+    });
+  };
+  const removeFood = (mealType, id) => updateDay(d => { d.meals[mealType] = d.meals[mealType].filter(f => f.id !== id); return d; });
+
+  const analyzeFood = async () => {
+    if (!aiInput.trim()) return;
+    setAiLoading(true); setAiError(""); setAiResult(null);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{
+            role: "user",
+            content: `다음 식사 내용의 각 음식별 칼로리를 추정해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 쓰지 마.\n\n입력: "${aiInput}"\n\n형식: [{"name":"음식명(양 포함)","calories":숫자}, ...]\n\n규칙:\n- 양이 명시되면 그 양 기준으로 계산\n- 1/2이면 절반 칼로리\n- g 단위면 그램 기준\n- 명시 없으면 1인분 기준\n- calories는 정수`
+          }]
+        })
+      });
+      const data = await res.json();
+      const text = data.content?.[0]?.text || "";
+      const clean = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      setAiResult(parsed);
+    } catch(e) {
+      setAiError("분석 실패. 다시 시도해주세요.");
+    }
+    setAiLoading(false);
+  };
+
+  const confirmAiResult = () => {
+    addFoodItems(aiMeal, aiResult);
+    setAiInput(""); setAiResult(null); setShowAiModal(false);
+  };
+
+  const addExercise = () => {
+    const name = exerciseForm.custom ? exerciseForm.customName : exerciseForm.type;
+    const met = exerciseForm.custom ? Number(exerciseForm.customMet) : EXERCISE_DB[exerciseForm.type];
+    const burned = Math.round(met * 3.5 * 70 / 200 * exerciseForm.duration);
+    updateDay(d => {
+      if (!d.exercises) d.exercises = [];
+      d.exercises.push({ id: Date.now(), name, duration: exerciseForm.duration, burned, time: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) });
+      return d;
+    });
+  };
+  const removeExercise = (id) => updateDay(d => { d.exercises = d.exercises.filter(e => e.id !== id); return d; });
+
+  const changeDate = (offset) => {
+    const d = new Date(currentDate + "T00:00:00"); d.setDate(d.getDate() + offset);
+    setCurrentDate(d.toISOString().slice(0, 10));
+  };
+  const isToday = currentDate === getTodayStr();
+
+  const getWeekData = () => {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const ds = d.toISOString().slice(0, 10);
+      const dd = data[ds] || getDefaultDay();
+      const cal = MEAL_TYPES.reduce((s, mt) => s + (dd.meals[mt] || []).reduce((a, f) => a + f.calories, 0), 0);
+      const burned = (dd.exercises || []).reduce((s, e) => s + e.burned, 0);
+      const slpMins = dd.sleep.duration ?? calcSleepDuration(dd.sleep.bedtime, dd.sleep.wakeup);
+      days.push({ date: ds, label: d.toLocaleDateString("ko-KR", { weekday: "short" }), cal, burned, slpMins });
+    }
+    return days;
+  };
+  const weekData = getWeekData();
+  const maxCal = Math.max(...weekData.map(d => d.cal), 1);
+  const maxSlp = Math.max(...weekData.map(d => d.slpMins || 0), 480);
+
+  const tabs = [
+    { id: "sleep", label: "수면", icon: "🌙" },
+    { id: "meal", label: "식사", icon: "🍽️" },
+    { id: "exercise", label: "운동", icon: "💪" },
+    { id: "summary", label: "요약", icon: "📊" },
+  ];
+
+  return (
+    <div style={{ maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: "#0f1117", color: "#e8eaf0", paddingBottom: 80 }}>
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg,#1a1d2e,#12141f)", padding: "16px 20px 12px", borderBottom: "1px solid #1e2035", position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <button onClick={() => changeDate(-1)} style={{ background: "none", border: "none", color: "#7b8cde", fontSize: 24, cursor: "pointer", padding: "0 8px" }}>‹</button>
+          <div style={{ textAlign: "center", cursor: "pointer" }} onClick={() => setShowDatePicker(!showDatePicker)}>
+            <div style={{ fontSize: 14, color: "#7b8cde", fontWeight: 600 }}>{isToday ? "오늘" : ""}</div>
+            <div style={{ fontSize: 17, fontWeight: 700 }}>{formatDate(currentDate)}</div>
+          </div>
+          <button onClick={() => changeDate(1)} style={{ background: "none", border: "none", color: "#7b8cde", fontSize: 24, cursor: "pointer", padding: "0 8px", opacity: isToday ? 0.3 : 1 }} disabled={isToday}>›</button>
+        </div>
+        {showDatePicker && (
+          <div style={{ marginTop: 10 }}>
+            <input type="date" value={currentDate} max={getTodayStr()}
+              onChange={e => { setCurrentDate(e.target.value); setShowDatePicker(false); }}
+              style={{ ...inputStyle }} />
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          {[
+            { label: "수면", value: sleepMins ? minsToHM(sleepMins) : "--", color: "#7b8cde", emoji: "🌙" },
+            { label: "섭취", value: `${totalCalories}kcal`, color: "#f97316", emoji: "🍽️" },
+            { label: "소모", value: `${totalBurnedCal}kcal`, color: "#4ade80", emoji: "💪" },
+          ].map(s => (
+            <div key={s.label} style={{ flex: 1, background: "#1e2035", borderRadius: 10, padding: "8px 6px", textAlign: "center", border: `1px solid ${s.color}22` }}>
+              <div style={{ fontSize: 11, color: "#7b8cde" }}>{s.emoji} {s.label}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: s.color, marginTop: 2 }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: "16px 16px 0" }}>
+
+        {/* SLEEP TAB */}
+        {tab === "sleep" && (
+          <div>
+            <SectionTitle>수면 기록</SectionTitle>
+            <Card>
+              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                <div style={{ flex: 1 }}>
+                  <Label>취침 시간 🛏️</Label>
+                  <input type="time" value={day.sleep.bedtime} onChange={e => updateSleep("bedtime", e.target.value)} style={{ ...inputStyle, fontSize: 15, fontWeight: 700 }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Label>기상 시간 ⏰</Label>
+                  <input type="time" value={day.sleep.wakeup} onChange={e => updateSleep("wakeup", e.target.value)} style={{ ...inputStyle, fontSize: 15, fontWeight: 700 }} />
+                </div>
+              </div>
+              {sleepMins != null && (
+                <div style={{ background: "#0f1117", borderRadius: 12, padding: 16, textAlign: "center", border: `2px solid ${sleepQuality.color}44` }}>
+                  <div style={{ fontSize: 36, marginBottom: 4 }}>{sleepQuality.emoji}</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: sleepQuality.color }}>{minsToHM(sleepMins)}</div>
+                  <div style={{ fontSize: 13, color: "#7b8cde", marginTop: 4 }}>수면 품질: <span style={{ color: sleepQuality.color, fontWeight: 700 }}>{sleepQuality.label}</span></div>
+                  <div style={{ fontSize: 11, color: "#4b5280", marginTop: 6 }}>권장 수면: 7~9시간</div>
+                </div>
+              )}
+            </Card>
+            <SectionTitle style={{ marginTop: 20 }}>최근 7일 수면</SectionTitle>
+            <Card>
+              <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 90 }}>
+                {weekData.map(d => {
+                  const h = d.slpMins ? Math.round((d.slpMins / maxSlp) * 80) : 0;
+                  const q = getSleepQuality(d.slpMins);
+                  const isSel = d.date === currentDate;
+                  return (
+                    <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" }} onClick={() => setCurrentDate(d.date)}>
+                      <div style={{ fontSize: 9, color: "#4b5280", marginBottom: 3 }}>{d.slpMins ? `${Math.floor(d.slpMins/60)}h` : ""}</div>
+                      <div style={{ width: "100%", height: h || 4, borderRadius: 4, background: q ? q.color : "#1e2035", opacity: isSel ? 1 : 0.6, border: isSel ? "2px solid #fff" : "none" }} />
+                      <div style={{ fontSize: 10, color: isSel ? "#e8eaf0" : "#4b5280", marginTop: 4, fontWeight: isSel ? 700 : 400 }}>{d.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* MEAL TAB */}
+        {tab === "meal" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <SectionTitle>식사 기록</SectionTitle>
+              <div style={{ fontSize: 13, color: "#f97316", fontWeight: 700 }}>총 {totalCalories} kcal</div>
+            </div>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "#7b8cde" }}>목표 2000 kcal</span>
+                <span style={{ fontSize: 12, color: totalCalories > 2000 ? "#f87171" : "#4ade80" }}>{totalCalories > 2000 ? `+${totalCalories-2000} 초과` : `${2000-totalCalories} 남음`}</span>
+              </div>
+              <div style={{ background: "#1e2035", borderRadius: 6, height: 8, overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 6, width: `${Math.min((totalCalories/2000)*100,100)}%`, background: totalCalories > 2000 ? "#f87171" : totalCalories > 1600 ? "#facc15" : "#4ade80" }} />
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                {MEAL_TYPES.map(mt => {
+                  const cal = (day.meals[mt]||[]).reduce((s,f)=>s+f.calories,0);
+                  return <div key={mt} style={{ flex: 1, textAlign: "center" }}><div style={{ fontSize: 10, color: "#4b5280" }}>{MEAL_ICONS[mt]}{mt}</div><div style={{ fontSize: 12, fontWeight: 600 }}>{cal}</div></div>;
+                })}
+              </div>
+            </Card>
+            {/* AI 입력 카드 */}
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: "#a5b4fc", fontWeight: 700, marginBottom: 10 }}>✨ AI 칼로리 분석</div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                {MEAL_TYPES.map(mt => (
+                  <div key={mt} onClick={() => setAiMeal(mt)}
+                    style={{ flex: 1, textAlign: "center", padding: "6px 4px", borderRadius: 8, cursor: "pointer", fontSize: 12,
+                      background: aiMeal === mt ? "#312e81" : "#12141f",
+                      border: `1px solid ${aiMeal === mt ? "#7b8cde" : "#2d3052"}`,
+                      color: aiMeal === mt ? "#a5b4fc" : "#4b5280", fontWeight: aiMeal === mt ? 700 : 400 }}>
+                    {MEAL_ICONS[mt]}{mt}
+                  </div>
+                ))}
+              </div>
+              <textarea
+                placeholder={"먹은 음식을 자유롭게 입력하세요\n예) 주먹밥 1/2, 미역국, 쌈야채, 불족발 200g"}
+                value={aiInput}
+                onChange={e => { setAiInput(e.target.value); setAiResult(null); setAiError(""); }}
+                rows={3}
+                style={{ ...inputStyle, resize: "none", lineHeight: 1.6 }}
+              />
+              {aiError && <div style={{ fontSize: 12, color: "#f87171", marginTop: 6 }}>{aiError}</div>}
+              {aiResult && (
+                <div style={{ marginTop: 10, background: "#0f1117", borderRadius: 10, padding: 12, border: "1px solid #2d3052" }}>
+                  <div style={{ fontSize: 12, color: "#7b8cde", marginBottom: 8 }}>📋 분석 결과 — {aiMeal}</div>
+                  {aiResult.map((item, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: i < aiResult.length-1 ? "1px solid #1e2035" : "none" }}>
+                      <span style={{ fontSize: 13 }}>{item.name}</span>
+                      <span style={{ fontSize: 13, color: "#f97316", fontWeight: 700 }}>{item.calories} kcal</span>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid #2d3052" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>합계</span>
+                    <span style={{ fontSize: 15, color: "#f97316", fontWeight: 800 }}>{aiResult.reduce((s,i)=>s+i.calories,0)} kcal</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button onClick={() => { setAiResult(null); setAiInput(""); }} style={{ flex: 1, background: "#1e2035", border: "1px solid #2d3052", borderRadius: 8, color: "#7b8cde", padding: "8px", fontSize: 13, cursor: "pointer" }}>취소</button>
+                    <button onClick={confirmAiResult} style={{ flex: 2, background: "linear-gradient(135deg,#312e81,#1e40af)", border: "none", borderRadius: 8, color: "#e8eaf0", padding: "8px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✅ {aiMeal}에 추가</button>
+                  </div>
+                </div>
+              )}
+              {!aiResult && (
+                <button onClick={analyzeFood} disabled={aiLoading || !aiInput.trim()}
+                  style={{ width: "100%", marginTop: 10, background: aiLoading || !aiInput.trim() ? "#1e2035" : "linear-gradient(135deg,#312e81,#1e40af)",
+                    border: "none", borderRadius: 10, color: aiLoading || !aiInput.trim() ? "#4b5280" : "#e8eaf0",
+                    padding: "11px", fontSize: 14, fontWeight: 700, cursor: aiLoading || !aiInput.trim() ? "default" : "pointer" }}>
+                  {aiLoading ? "🤖 AI 분석 중..." : "🔍 칼로리 분석"}
+                </button>
+              )}
+            </Card>
+
+            {/* 식사별 목록 */}
+            {MEAL_TYPES.map(mealType => (
+              <div key={mealType} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#a5b4fc" }}>{MEAL_ICONS[mealType]} {mealType}</span>
+                  <span style={{ fontSize: 12, color: "#f97316" }}>{(day.meals[mealType]||[]).reduce((s,f)=>s+f.calories,0)} kcal</span>
+                </div>
+                {(day.meals[mealType]||[]).length === 0
+                  ? <div style={{ fontSize: 12, color: "#2d3052", padding: "6px 12px" }}>기록 없음</div>
+                  : (day.meals[mealType]||[]).map(f => (
+                    <div key={f.id} style={foodItemStyle}>
+                      <div><div style={{ fontSize: 13, fontWeight: 600 }}>{f.name}</div><div style={{ fontSize: 11, color: "#4b5280" }}>{f.time}</div></div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 13, color: "#f97316", fontWeight: 700 }}>{f.calories} kcal</span>
+                        <button onClick={() => removeFood(mealType, f.id)} style={removeBtnStyle}>✕</button>
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* EXERCISE TAB */}
+        {tab === "exercise" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <SectionTitle>운동 기록</SectionTitle>
+              <div style={{ fontSize: 13, color: "#4ade80", fontWeight: 700 }}>소모 {totalBurnedCal} kcal</div>
+            </div>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
+                {[
+                  { label: "섭취", val: totalCalories, color: "#f97316", emoji: "🍽️" },
+                  { label: "소모", val: totalBurnedCal, color: "#4ade80", emoji: "🔥" },
+                  { label: "순칼로리", val: netCalories, color: netCalories < 0 ? "#4ade80" : netCalories > 500 ? "#f87171" : "#facc15", emoji: "⚖️" },
+                ].map(item => (
+                  <div key={item.label}>
+                    <div style={{ fontSize: 12, color: "#4b5280" }}>{item.emoji} {item.label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: item.color }}>{item.val}</div>
+                    <div style={{ fontSize: 10, color: "#4b5280" }}>kcal</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#a5b4fc", marginBottom: 12 }}>운동 추가</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {Object.keys(EXERCISE_DB).map(ex => (
+                  <div key={ex} onClick={() => setExerciseForm(p => ({...p, type: ex, custom: false}))}
+                    style={{ padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                      background: exerciseForm.type === ex && !exerciseForm.custom ? "#312e81" : "#1e2035",
+                      border: `1px solid ${exerciseForm.type === ex && !exerciseForm.custom ? "#7b8cde" : "#2d3052"}`,
+                      color: exerciseForm.type === ex && !exerciseForm.custom ? "#a5b4fc" : "#7b8cde" }}>{ex}</div>
+                ))}
+                <div onClick={() => setExerciseForm(p => ({...p, custom: true}))}
+                  style={{ padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                    background: exerciseForm.custom ? "#312e81" : "#1e2035",
+                    border: `1px solid ${exerciseForm.custom ? "#7b8cde" : "#2d3052"}`,
+                    color: exerciseForm.custom ? "#a5b4fc" : "#7b8cde" }}>직접 입력</div>
+              </div>
+              {exerciseForm.custom && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <input placeholder="운동명" value={exerciseForm.customName} onChange={e => setExerciseForm(p => ({...p, customName: e.target.value}))} style={{ ...inputStyle, flex: 2 }} />
+                  <input placeholder="MET(3~12)" type="number" value={exerciseForm.customMet} onChange={e => setExerciseForm(p => ({...p, customMet: e.target.value}))} style={{ ...inputStyle, flex: 1 }} />
+                </div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <Label>운동 시간</Label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {[10,20,30,45,60,90].map(m => (
+                    <div key={m} onClick={() => setExerciseForm(p => ({...p, duration: m}))}
+                      style={{ padding: "5px 8px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                        background: exerciseForm.duration === m ? "#312e81" : "#1e2035",
+                        border: `1px solid ${exerciseForm.duration === m ? "#7b8cde" : "#2d3052"}`,
+                        color: exerciseForm.duration === m ? "#a5b4fc" : "#7b8cde" }}>{m}분</div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 13, color: "#4ade80" }}>예상 소모: <strong>{Math.round((exerciseForm.custom ? Number(exerciseForm.customMet) : EXERCISE_DB[exerciseForm.type]) * 3.5 * 70 / 200 * exerciseForm.duration)} kcal</strong></div>
+                <button onClick={addExercise} style={{ background: "linear-gradient(135deg,#312e81,#1e40af)", border: "none", borderRadius: 10, padding: "10px 20px", color: "#e8eaf0", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>기록 추가</button>
+              </div>
+            </Card>
+            {(day.exercises||[]).length === 0
+              ? <div style={{ textAlign: "center", color: "#2d3052", padding: 24, fontSize: 13 }}>운동 기록 없음</div>
+              : (day.exercises||[]).map(e => (
+                <div key={e.id} style={foodItemStyle}>
+                  <div><div style={{ fontSize: 13, fontWeight: 600 }}>💪 {e.name}</div><div style={{ fontSize: 11, color: "#4b5280" }}>{e.time} · {e.duration}분</div></div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 13, color: "#4ade80", fontWeight: 700 }}>{e.burned} kcal</span>
+                    <button onClick={() => removeExercise(e.id)} style={removeBtnStyle}>✕</button>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        )}
+
+        {/* SUMMARY TAB */}
+        {tab === "summary" && (
+          <div>
+            <SectionTitle>주간 요약</SectionTitle>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: "#a5b4fc", fontWeight: 700, marginBottom: 10 }}>📊 칼로리 (7일)</div>
+              <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 80 }}>
+                {weekData.map(d => {
+                  const h = Math.round((d.cal / Math.max(maxCal,2000)) * 70);
+                  const bh = Math.round((d.burned / Math.max(maxCal,2000)) * 70);
+                  const isSel = d.date === currentDate;
+                  return (
+                    <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" }} onClick={() => { setCurrentDate(d.date); setTab("meal"); }}>
+                      <div style={{ fontSize: 9, color: "#4b5280" }}>{d.cal||""}</div>
+                      <div style={{ width: "100%", position: "relative", height: 70, display: "flex", alignItems: "flex-end", gap: 1 }}>
+                        <div style={{ flex: 1, height: h||2, borderRadius: "3px 3px 0 0", background: "#f97316", opacity: isSel?1:0.6 }} />
+                        <div style={{ flex: 1, height: bh||0, borderRadius: "3px 3px 0 0", background: "#4ade80", opacity: isSel?1:0.6 }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: isSel?"#e8eaf0":"#4b5280", marginTop: 2, fontWeight: isSel?700:400 }}>{d.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4b5280" }}><div style={{ width: 8, height: 8, borderRadius: 2, background: "#f97316" }} /> 섭취</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4b5280" }}><div style={{ width: 8, height: 8, borderRadius: 2, background: "#4ade80" }} /> 소모</div>
+              </div>
+            </Card>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: "#a5b4fc", fontWeight: 700, marginBottom: 10 }}>😴 수면 시간 (7일)</div>
+              <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 80 }}>
+                {weekData.map(d => {
+                  const h = d.slpMins ? Math.round((d.slpMins/Math.max(maxSlp,540))*70) : 0;
+                  const q = getSleepQuality(d.slpMins);
+                  const isSel = d.date === currentDate;
+                  return (
+                    <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" }} onClick={() => { setCurrentDate(d.date); setTab("sleep"); }}>
+                      <div style={{ fontSize: 9, color: "#4b5280" }}>{d.slpMins ? `${Math.floor(d.slpMins/60)}h` : ""}</div>
+                      <div style={{ width: "100%", height: h||2, borderRadius: "3px 3px 0 0", background: q?q.color:"#2d3052", opacity: isSel?1:0.6 }} />
+                      <div style={{ fontSize: 10, color: isSel?"#e8eaf0":"#4b5280", marginTop: 2, fontWeight: isSel?700:400 }}>{d.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {[
+                { label: "평균 수면", value: minsToHM(Math.round(weekData.filter(d=>d.slpMins).reduce((s,d)=>s+d.slpMins,0)/Math.max(weekData.filter(d=>d.slpMins).length,1))), color: "#7b8cde", emoji: "🌙" },
+                { label: "평균 섭취", value: `${Math.round(weekData.reduce((s,d)=>s+d.cal,0)/7)} kcal`, color: "#f97316", emoji: "🍽️" },
+                { label: "총 소모", value: `${weekData.reduce((s,d)=>s+d.burned,0)} kcal`, color: "#4ade80", emoji: "💪" },
+                { label: "운동 일수", value: `${weekData.filter(d=>d.burned>0).length}일`, color: "#facc15", emoji: "🏃" },
+              ].map(s => (
+                <div key={s.label} style={{ background: "#1a1d2e", borderRadius: 12, padding: 14, border: `1px solid ${s.color}22` }}>
+                  <div style={{ fontSize: 12, color: "#4b5280" }}>{s.emoji} {s.label}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: s.color, marginTop: 4 }}>{s.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom nav */}
+      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: "#12141f", borderTop: "1px solid #1e2035", display: "flex" }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: "10px 0 14px", background: "none", border: "none", color: tab === t.id ? "#a5b4fc" : "#4b5280", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <span style={{ fontSize: 20 }}>{t.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: tab === t.id ? 700 : 400 }}>{t.label}</span>
+            {tab === t.id && <div style={{ width: 20, height: 2, background: "#7b8cde", borderRadius: 2 }} />}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
