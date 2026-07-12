@@ -161,6 +161,10 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (points == lastCurvePoints) return
         lastCurvePoints = points
         val lut = CurveLut.build256(points)
+        // 반드시 유닛1을 활성화한 뒤 바인드해야 한다 — 이 시점에 유닛0이 활성 상태이면
+        // glBindTexture가 유닛0의 GL_TEXTURE_2D 바인딩(사진 텍스처)을 덮어써서
+        // 화면에 사진 대신 이 LUT 텍스처가 그려지는 버그가 생긴다.
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, curveLutTextureId)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
         GLES30.glTexImage2D(
@@ -181,6 +185,9 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         for (i in lutFloats.indices) {
             bytes[i] = (lutFloats[i].coerceIn(0f, 1f) * 255f + 0.5f).toInt().coerceIn(0, 255).toByte()
         }
+        // GL_TEXTURE_3D는 GL_TEXTURE_2D와 별개 타겟이라 사진 텍스처(유닛0, 2D)를 직접
+        // 덮어쓰진 않지만, 항상 명시적으로 유닛을 지정해 어느 유닛이 활성 상태든 안전하게 만든다.
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, filmLutTextureId)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
         GLES30.glTexImage3D(
@@ -191,6 +198,7 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     private fun uploadPendingImageIfAny() {
         val image = synchronized(this) { pendingImage.also { pendingImage = null } } ?: return
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
         // RGB8 각 행은 width*3바이트라 4의 배수가 아닐 수 있음 - 기본 UNPACK_ALIGNMENT(4)를 쓰면
         // 행 경계가 어긋나 이미지가 깨진다.
