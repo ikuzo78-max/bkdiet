@@ -2,6 +2,8 @@ package com.rawlab.editor.ui
 
 import android.graphics.Bitmap
 import android.opengl.GLSurfaceView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -47,6 +49,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.rawlab.editor.R
+import com.rawlab.editor.export.ExportFormat
 import com.rawlab.editor.gl.RawGLRenderer
 import com.rawlab.editor.raw.FilmSimLut
 import com.rawlab.editor.raw.ProcessedImage
@@ -64,6 +67,10 @@ fun EditorScreen(viewModel: EditorViewModel) {
 
     val renderer = remember { RawGLRenderer(context) }
     var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
+
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) viewModel.setExportFolder(uri)
+    }
 
     LaunchedEffect(decoded) {
         renderer.submitImage(decoded)
@@ -150,6 +157,34 @@ fun EditorScreen(viewModel: EditorViewModel) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
+            Text(stringResource(R.string.editor_export_settings), style = MaterialTheme.typography.labelMedium)
+            Row {
+                ExportFormat.entries.forEach { format ->
+                    val selected = uiState.exportFormat == format
+                    TextButton(onClick = { viewModel.setExportFormat(format) }) {
+                        Text(
+                            text = format.name,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (selected) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                        )
+                    }
+                }
+            }
+            Text(
+                text = uiState.exportFolderName ?: stringResource(R.string.editor_export_folder_default),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row {
+                TextButton(onClick = { folderPicker.launch(null) }) {
+                    Text(stringResource(R.string.editor_export_folder_pick))
+                }
+                if (uiState.exportFolderUri != null) {
+                    TextButton(onClick = { viewModel.setExportFolder(null) }) {
+                        Text(stringResource(R.string.editor_export_folder_reset))
+                    }
+                }
+            }
+
             Text(stringResource(R.string.editor_film_simulation), style = MaterialTheme.typography.labelMedium)
             Row(modifier = Modifier
                 .fillMaxWidth()

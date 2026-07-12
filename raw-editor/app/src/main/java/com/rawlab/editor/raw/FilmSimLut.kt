@@ -3,8 +3,8 @@ package com.rawlab.editor.raw
 import android.content.Context
 
 /**
- * assets/luts/*.cube (후지필름 필름 시뮬레이션, CC BY-NC-SA 4.0 —
- * assets/luts/LICENSE-LUTS.md 참고)를 파싱해 32x32x32 RGB LUT로 제공한다.
+ * assets/luts/ 안의 .cube 파일(후지필름 필름 시뮬레이션, CC BY-NC-SA 4.0 —
+ * assets/luts/LICENSE-LUTS.md 참고)을 파싱해 32x32x32 RGB LUT로 제공한다.
  *
  * .cube 파일의 데이터 순서(R이 가장 안쪽, G, B 순서로 바깥쪽)는 OpenGL의
  * GL_TEXTURE_3D가 기대하는 메모리 레이아웃(x=R 최우선, y=G, z=B)과 그대로

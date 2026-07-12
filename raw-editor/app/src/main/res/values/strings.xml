@@ -18,7 +18,7 @@
     <string name="editor_crop_rotate">크롭/회전</string>
     <string name="editor_rotate">회전</string>
     <string name="editor_reset">초기화</string>
-    <string name="export_success">저장 완료: Pictures/RawLab</string>
+    <string name="export_success">저장 완료</string>
     <string name="export_failure">저장 실패</string>
     <string name="decode_failure">RAW 디코딩 실패</string>
     <string name="editor_curve">톤커브</string>
@@ -28,4 +28,8 @@
     <string name="editor_loupe_close">닫기</string>
     <string name="editor_film_simulation">필름 시뮬레이션</string>
     <string name="editor_film_strength">강도</string>
+    <string name="editor_export_settings">저장 설정</string>
+    <string name="editor_export_folder_default">기본 위치 (Pictures/RawLab)</string>
+    <string name="editor_export_folder_pick">폴더 선택</string>
+    <string name="editor_export_folder_reset">기본값으로</string>
 </resources>

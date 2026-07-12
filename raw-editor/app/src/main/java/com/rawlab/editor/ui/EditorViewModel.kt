@@ -1,11 +1,15 @@
 package com.rawlab.editor.ui
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.rawlab.editor.R
+import com.rawlab.editor.export.ExportFormat
+import com.rawlab.editor.export.ExportPrefs
 import com.rawlab.editor.export.Exporter
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
@@ -39,11 +43,23 @@ data class RawLabUiState(
     val sourceDisplayName: String = "rawlab",
     val loupeImage: ProcessedImage? = null,
     val isLoupeLoading: Boolean = false,
+    val exportFormat: ExportFormat = ExportFormat.JPEG,
+    /** null이면 기본 위치(Pictures/RawLab, MediaStore)에 저장. */
+    val exportFolderUri: Uri? = null,
+    val exportFolderName: String? = null,
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _uiState = MutableStateFlow(RawLabUiState())
+    private val _uiState = MutableStateFlow(
+        RawLabUiState(
+            exportFormat = ExportPrefs.getFormat(application),
+            exportFolderUri = ExportPrefs.getTreeUri(application),
+            exportFolderName = ExportPrefs.getTreeUri(application)?.let { treeUri ->
+                runCatching { DocumentFile.fromTreeUri(application, treeUri)?.name }.getOrNull()
+            },
+        )
+    )
     val uiState: StateFlow<RawLabUiState> = _uiState
 
     fun openRaw(uri: Uri) {
@@ -104,13 +120,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             // 전체 해상도는 여기서 다시 디코드한다 (프리뷰는 PREVIEW_MAX_DIMENSION으로
             // 축소된 프록시라 그대로 저장하면 원본 화소를 잃는다).
             val result = withContext(Dispatchers.Default) {
-                runCatching { Exporter.export(context, uri, state.editState, state.sourceDisplayName) }
+                runCatching {
+                    Exporter.export(
+                        context, uri, state.editState, state.sourceDisplayName,
+                        state.exportFormat, state.exportFolderUri,
+                    )
+                }
             }
             _uiState.update {
                 it.copy(
                     isExporting = false,
-                    exportMessage = context.getString(
-                        if (result.isSuccess) R.string.export_success else R.string.export_failure
+                    exportMessage = result.fold(
+                        onSuccess = { location -> "${context.getString(R.string.export_success)}: $location" },
+                        onFailure = { context.getString(R.string.export_failure) },
                     ),
                 )
             }
@@ -119,6 +141,27 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun consumeExportMessage() {
         _uiState.update { it.copy(exportMessage = null) }
+    }
+
+    fun setExportFormat(format: ExportFormat) {
+        ExportPrefs.setFormat(getApplication<Application>(), format)
+        _uiState.update { it.copy(exportFormat = format) }
+    }
+
+    /** SAF 폴더 선택 결과(uri)를 반영한다. null이면 기본 위치(Pictures/RawLab)로 되돌린다. */
+    fun setExportFolder(uri: Uri?) {
+        val context = getApplication<Application>()
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+        }
+        ExportPrefs.setTreeUri(context, uri)
+        val name = uri?.let { runCatching { DocumentFile.fromTreeUri(context, it)?.name }.getOrNull() }
+        _uiState.update { it.copy(exportFolderUri = uri, exportFolderName = name) }
     }
 
     /** 화면 중심(centerX, centerY, 0..1, 크롭+회전 이후 좌표 기준) 주변을 원본 해상도로

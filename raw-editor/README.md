@@ -61,16 +61,21 @@ app/src/main/
     raw/DecodedRaw.kt     # 디코드 결과 (width, height, RGB8 pixels)
     raw/RawProcessor.kt   # JNI 전체해상도 보정/히스토그램 래퍼
     raw/ProcessedImage.kt # 보정 결과 (width, height, ARGB8888 pixels)
-    raw/EditState.kt      # 비파괴 편집 파라미터 (톤커브 포함)
+    raw/EditState.kt      # 비파괴 편집 파라미터 (톤커브/필름시뮬레이션 포함)
     raw/CurveLut.kt       # 톤커브 5점 -> 256단계 LUT (구간별 선형보간, GL 텍스처용)
+    raw/FilmSimLut.kt     # .cube 파싱(+캐시), 필름 시뮬레이션 3D LUT
     gl/RawGLRenderer.kt   # GLSurfaceView.Renderer, 실시간 프리뷰(프록시 해상도)
     gl/ShaderUtils.kt     # 셰이더 컴파일/링크 공용 헬퍼
     ui/HomeScreen.kt       # SAF로 RAW 파일 선택
-    ui/EditorScreen.kt     # 프리뷰 + 슬라이더 + 톤커브 + 히스토그램 + 100%확인 + 회전/export
+    ui/EditorScreen.kt     # 프리뷰 + 슬라이더 + 필름시뮬레이션 + 톤커브 + 히스토그램 +
+                           # 100%확인 + 회전/저장설정/export
     ui/CurveEditor.kt      # 5점 드래그 톤커브 에디터 (Canvas)
     ui/HistogramView.kt    # RGB 히스토그램 오버레이 (Canvas)
     ui/EditorViewModel.kt  # 원본 Uri 보관, 프리뷰/export/100%확인 트리거
-    export/Exporter.kt     # 원본 Uri 재디코드(전체 해상도) -> RawProcessor -> JPEG -> MediaStore
+    export/Exporter.kt     # 원본 Uri 재디코드(전체 해상도) -> RawProcessor -> 지정 포맷/폴더로 저장
+    export/ExportFormat.kt # JPEG/PNG 포맷 정의
+    export/ExportPrefs.kt  # 저장 포맷/폴더 선택 기억 (SharedPreferences)
+  assets/luts/            # 필름 시뮬레이션 .cube 11종 + LICENSE-LUTS.md
   assets/shaders/
     adjust.vert / adjust.frag  # 프리뷰 GPU 셰이더 (raw_process.cpp가 같은 공식을 CPU로 재현,
                                 # 톤커브는 256x1 LUT 텍스처로 샘플링)
@@ -125,7 +130,10 @@ RGB8 버퍼만 ~300MB고, 보급형/구형 기기의 `GL_MAX_TEXTURE_SIZE`(보�
   자세한 조건은 `assets/luts/LICENSE-LUTS.md` 참고. RawLab을 상업적으로 배포할
   계획이 있다면 이 LUT들은 제외하거나 별도 라이선스를 확인해야 한다.
 - AI 마스킹(하늘/인물 등 영역별 보정)은 사용자 요청으로 범위에서 제외했다.
-- 데이트 스탬프, 즐겨찾기/필터, 저장 경로·포맷 선택, 배치 처리, 16bit 선형 파이프라인,
+- 저장 시 포맷(JPEG/PNG)과 저장 폴더(SAF `ACTION_OPEN_DOCUMENT_TREE`, 미선택 시
+  기본값 `Pictures/RawLab`)를 고를 수 있다. 마지막 선택은 앱 재실행 후에도 유지된다
+  (`ExportPrefs`, `SharedPreferences` 기반).
+- 데이트 스탬프, 즐겨찾기/필터, 배치 처리, 16bit 선형 파이프라인,
   R/G/B 개별 채널 커브, 자동 테스트/CI는 아직 없음.
 
 ## 참고한 레퍼런스
