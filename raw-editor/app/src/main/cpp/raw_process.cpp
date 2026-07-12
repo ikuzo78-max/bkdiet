@@ -118,6 +118,78 @@ void readCurvePoints(JNIEnv *env, jfloatArray curvePointsIn, float out[5]) {
     for (int i = 0; i < 5; ++i) out[i] = buf[i];
 }
 
+// (rot==90/270일 때 cropW/cropH가 필요하므로 인자로 받는다) 회전 후(output) 좌표를
+// 회전 전(cropped) 좌표로 역매핑한다. 아래 rotateBuffer()의 정방향 매핑과 반드시 짝을
+// 맞춰 유지해야 한다.
+void inverseRotatePoint(int rot, int cropW, int cropH, int outX, int outY, int &cropX, int &cropY) {
+    switch (rot) {
+        case 90:
+            // 정방향: dx=y, dy=cropW-1-x  =>  역방향: y=dx, x=cropW-1-dy
+            cropX = cropW - 1 - outY;
+            cropY = outX;
+            break;
+        case 270:
+            // 정방향: dx=cropH-1-y, dy=x  =>  역방향: y=cropH-1-dx, x=dy
+            cropX = outY;
+            cropY = cropH - 1 - outX;
+            break;
+        case 180:
+            cropX = cropW - 1 - outX;
+            cropY = cropH - 1 - outY;
+            break;
+        default:
+            cropX = outX;
+            cropY = outY;
+            break;
+    }
+}
+
+// srcBuf(폭 srcW x 높이 srcH, RGB8)를 rot도만큼 회전해 dst에 담는다. 회전 방향은
+// GL 프리뷰(Matrix.rotateM, +Z축 기준 양의 각도 = 반시계 방향 회전)와 일치시켰다:
+// rot=90은 반시계, rot=270(=-90)은 시계 방향.
+void rotateBuffer(const std::vector<uint8_t> &srcBuf, int srcW, int srcH, int rot,
+                   std::vector<uint8_t> &dst, int &dstW, int &dstH) {
+    if (rot == 90 || rot == 270) {
+        dstW = srcH;
+        dstH = srcW;
+        dst.resize(static_cast<size_t>(dstW) * dstH * 3);
+        for (int y = 0; y < srcH; ++y) {
+            for (int x = 0; x < srcW; ++x) {
+                size_t srcIdx = (static_cast<size_t>(y) * srcW + x) * 3;
+                int dx, dy;
+                if (rot == 90) {
+                    dx = y;
+                    dy = srcW - 1 - x;
+                } else {
+                    dx = srcH - 1 - y;
+                    dy = x;
+                }
+                size_t dstIdx = (static_cast<size_t>(dy) * dstW + dx) * 3;
+                dst[dstIdx] = srcBuf[srcIdx];
+                dst[dstIdx + 1] = srcBuf[srcIdx + 1];
+                dst[dstIdx + 2] = srcBuf[srcIdx + 2];
+            }
+        }
+    } else if (rot == 180) {
+        dstW = srcW;
+        dstH = srcH;
+        dst.resize(static_cast<size_t>(dstW) * dstH * 3);
+        for (int y = 0; y < srcH; ++y) {
+            for (int x = 0; x < srcW; ++x) {
+                size_t srcIdx = (static_cast<size_t>(y) * srcW + x) * 3;
+                size_t dstIdx = (static_cast<size_t>(srcH - 1 - y) * dstW + (srcW - 1 - x)) * 3;
+                dst[dstIdx] = srcBuf[srcIdx];
+                dst[dstIdx + 1] = srcBuf[srcIdx + 1];
+                dst[dstIdx + 2] = srcBuf[srcIdx + 2];
+            }
+        }
+    } else {
+        dstW = srcW;
+        dstH = srcH;
+        dst = srcBuf;
+    }
+}
+
 // 필름 시뮬레이션 3D LUT (adjust.frag의 uFilmLut 트라이리니어 샘플링을 CPU로 재현).
 // lut는 FilmSimLut.kt와 동일한 순서(.cube 표준: R 최우선, G, B 순서로 바깥쪽)의
 // size*size*size*3 RGB(0..1) 배열. lut가 비어있거나 strength<=0이면 무보정.
@@ -193,28 +265,82 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     const float tintShift = tint * 0.30f;
     const float evScale = powf(2.f, exposure * 3.f);
 
-    const size_t pixelCount = static_cast<size_t>(width) * height;
-    std::vector<float> adjusted(pixelCount * 3);
+    // 크롭 영역 (원본 이미지 좌표계)
+    int cropLeftPx = static_cast<int>(cropLeft * width + 0.5f);
+    int cropTopPx = static_cast<int>(cropTop * height + 0.5f);
+    int cropRightPx = static_cast<int>(cropRight * width + 0.5f);
+    int cropBottomPx = static_cast<int>(cropBottom * height + 0.5f);
+    cropLeftPx = std::max(0, std::min(cropLeftPx, width - 1));
+    cropTopPx = std::max(0, std::min(cropTopPx, height - 1));
+    cropRightPx = std::max(cropLeftPx + 1, std::min(cropRightPx, width));
+    cropBottomPx = std::max(cropTopPx + 1, std::min(cropBottomPx, height));
+    int cropW = cropRightPx - cropLeftPx;
+    int cropH = cropBottomPx - cropTopPx;
 
-    for (size_t i = 0; i < pixelCount; ++i) {
-        size_t idx = i * 3;
-        float r = src[idx] / 255.f;
-        float g = src[idx + 1] / 255.f;
-        float b = src[idx + 2] / 255.f;
-        adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
-                    contrast, saturation, vibrance, curve);
-        adjusted[idx] = r;
-        adjusted[idx + 1] = g;
-        adjusted[idx + 2] = b;
+    int rot = ((rotationDegrees % 360) + 360) % 360;
+    int outW = (rot == 90 || rot == 270) ? cropH : cropW;
+    int outH = (rot == 90 || rot == 270) ? cropW : cropH;
+
+    // 실제로 픽셀 연산이 필요한 영역만 계산한다. patchSize<=0(export)는 크롭 전체가
+    // 곧 그 영역이지만, patchSize>0("100% 확인")는 요청한 작은 패치에 대응하는
+    // 원본 좌표계 사각형만 역산해서 그만큼만 처리한다 — GFX100RF 같은 1억 화소
+    // 이미지를 통째로 보정하면 GB 단위 메모리가 필요해 저사양 기기에서 OOM으로
+    // 죽을 수 있는데, 패치는 수 MB만으로 충분하다.
+    int regionInCropX, regionInCropY, regionW, regionH;
+    if (patchSize > 0) {
+        int cx = static_cast<int>(patchCenterX * outW);
+        int cy = static_cast<int>(patchCenterY * outH);
+        int patchOutW = std::min(patchSize, outW);
+        int patchOutH = std::min(patchSize, outH);
+        int patchOutX = std::max(0, std::min(cx - patchOutW / 2, outW - patchOutW));
+        int patchOutY = std::max(0, std::min(cy - patchOutH / 2, outH - patchOutH));
+
+        // 출력(회전 후) 좌표계의 패치 사각형 네 모서리를 크롭(회전 전) 좌표계로
+        // 역매핑해서 그 바운딩 박스를 구한다 — 90도 단위 회전은 등거리 변환이라
+        // 사각형이 그대로 사각형으로 대응되므로 바운딩 박스가 곧 정확한 사각형이다.
+        int cx0, cy0, cx1, cy1, cx2, cy2, cx3, cy3;
+        inverseRotatePoint(rot, cropW, cropH, patchOutX, patchOutY, cx0, cy0);
+        inverseRotatePoint(rot, cropW, cropH, patchOutX + patchOutW - 1, patchOutY, cx1, cy1);
+        inverseRotatePoint(rot, cropW, cropH, patchOutX, patchOutY + patchOutH - 1, cx2, cy2);
+        inverseRotatePoint(rot, cropW, cropH, patchOutX + patchOutW - 1, patchOutY + patchOutH - 1, cx3, cy3);
+        int minX = std::min(std::min(cx0, cx1), std::min(cx2, cx3));
+        int maxX = std::max(std::max(cx0, cx1), std::max(cx2, cx3));
+        int minY = std::min(std::min(cy0, cy1), std::min(cy2, cy3));
+        int maxY = std::max(std::max(cy0, cy1), std::max(cy2, cy3));
+        regionInCropX = minX;
+        regionInCropY = minY;
+        regionW = maxX - minX + 1;
+        regionH = maxY - minY + 1;
+
+        // 방어적 클램프 (좌표 계산이 어긋나도 버퍼 밖을 읽지 않도록).
+        regionInCropX = std::max(0, std::min(regionInCropX, cropW - 1));
+        regionInCropY = std::max(0, std::min(regionInCropY, cropH - 1));
+        regionW = std::max(1, std::min(regionW, cropW - regionInCropX));
+        regionH = std::max(1, std::min(regionH, cropH - regionInCropY));
+    } else {
+        regionInCropX = 0;
+        regionInCropY = 0;
+        regionW = cropW;
+        regionH = cropH;
     }
+    int regionOrigX = cropLeftPx + regionInCropX;
+    int regionOrigY = cropTopPx + regionInCropY;
 
-    // 7) 샤픈: 셰이더와 동일하게 "원본(src)" 이웃 4픽셀 평균 대비 언샵마스크를
-    // 보정된(adjusted) 픽셀에 더한다.
-    std::vector<uint8_t> finalPixels(pixelCount * 3);
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
+    // 1~8단계(화이트밸런스~톤커브~샤픈~필름시뮬레이션)를 필요한 영역에 대해서만
+    // 한 번의 패스로 계산한다. 샤픈의 이웃 픽셀은 항상 원본 전체(src, width/height)
+    // 기준으로 클램프해서 읽으므로 영역 경계에서도 전체 이미지를 처리했을 때와
+    // 동일한 결과가 나온다.
+    std::vector<uint8_t> regionOut(static_cast<size_t>(regionW) * regionH * 3);
+    for (int ry = 0; ry < regionH; ++ry) {
+        int y = regionOrigY + ry;
+        for (int rx = 0; rx < regionW; ++rx) {
+            int x = regionOrigX + rx;
             size_t idx = (static_cast<size_t>(y) * width + x) * 3;
-            float r = adjusted[idx], g = adjusted[idx + 1], b = adjusted[idx + 2];
+            float r = src[idx] / 255.f;
+            float g = src[idx + 1] / 255.f;
+            float b = src[idx + 2] / 255.f;
+            adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
+                        contrast, saturation, vibrance, curve);
 
             if (sharpen > 0.f) {
                 int xm = std::max(x - 1, 0);
@@ -236,116 +362,37 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
             g = clamp01(g);
             b = clamp01(b);
 
-            // 8) 필름 시뮬레이션 (3D LUT, 마지막에 "룩"으로 적용)
             applyFilmLut(r, g, b, filmLutPtr, filmLutSize, filmLutStrength);
 
-            finalPixels[idx] = static_cast<uint8_t>(clamp01(r) * 255.f + 0.5f);
-            finalPixels[idx + 1] = static_cast<uint8_t>(clamp01(g) * 255.f + 0.5f);
-            finalPixels[idx + 2] = static_cast<uint8_t>(clamp01(b) * 255.f + 0.5f);
+            size_t outIdx = (static_cast<size_t>(ry) * regionW + rx) * 3;
+            regionOut[outIdx] = static_cast<uint8_t>(clamp01(r) * 255.f + 0.5f);
+            regionOut[outIdx + 1] = static_cast<uint8_t>(clamp01(g) * 255.f + 0.5f);
+            regionOut[outIdx + 2] = static_cast<uint8_t>(clamp01(b) * 255.f + 0.5f);
         }
     }
 
-    // 9) 크롭
-    int cropLeftPx = static_cast<int>(cropLeft * width + 0.5f);
-    int cropTopPx = static_cast<int>(cropTop * height + 0.5f);
-    int cropRightPx = static_cast<int>(cropRight * width + 0.5f);
-    int cropBottomPx = static_cast<int>(cropBottom * height + 0.5f);
-    cropLeftPx = std::max(0, std::min(cropLeftPx, width - 1));
-    cropTopPx = std::max(0, std::min(cropTopPx, height - 1));
-    cropRightPx = std::max(cropLeftPx + 1, std::min(cropRightPx, width));
-    cropBottomPx = std::max(cropTopPx + 1, std::min(cropBottomPx, height));
-    int cropW = cropRightPx - cropLeftPx;
-    int cropH = cropBottomPx - cropTopPx;
+    // 9) 회전 — 이미 필요한 영역만 남겨뒀으므로 회전 후 크기가 곧 최종 출력 크기다
+    // (export는 크롭 전체 회전 결과, "100% 확인"은 요청한 패치 크기와 정확히 일치).
+    std::vector<uint8_t> finalBuf;
+    int finalW, finalH;
+    rotateBuffer(regionOut, regionW, regionH, rot, finalBuf, finalW, finalH);
 
-    std::vector<uint8_t> cropped(static_cast<size_t>(cropW) * cropH * 3);
-    for (int y = 0; y < cropH; ++y) {
-        size_t srcRow = (static_cast<size_t>(cropTopPx + y) * width + cropLeftPx) * 3;
-        size_t dstRow = static_cast<size_t>(y) * cropW * 3;
-        std::copy(finalPixels.begin() + srcRow, finalPixels.begin() + srcRow + cropW * 3,
-                  cropped.begin() + dstRow);
-    }
-
-    // 10) 회전 (90도 단위만 지원)
-    int rot = ((rotationDegrees % 360) + 360) % 360;
-    std::vector<uint8_t> rotated;
-    int outW, outH;
-    if (rot == 90 || rot == 270) {
-        outW = cropH;
-        outH = cropW;
-        rotated.resize(static_cast<size_t>(outW) * outH * 3);
-        for (int y = 0; y < cropH; ++y) {
-            for (int x = 0; x < cropW; ++x) {
-                size_t srcIdx = (static_cast<size_t>(y) * cropW + x) * 3;
-                // GL 프리뷰(Matrix.rotateM, +Z축 기준 양의 각도 = 반시계 방향 회전)와
-                // 방향을 맞춰야 한다: rot=90은 반시계, rot=270(=-90)은 시계 방향.
-                int dx, dy;
-                if (rot == 90) {
-                    dx = y;
-                    dy = cropW - 1 - x;
-                } else { // 270
-                    dx = cropH - 1 - y;
-                    dy = x;
-                }
-                size_t dstIdx = (static_cast<size_t>(dy) * outW + dx) * 3;
-                rotated[dstIdx] = cropped[srcIdx];
-                rotated[dstIdx + 1] = cropped[srcIdx + 1];
-                rotated[dstIdx + 2] = cropped[srcIdx + 2];
-            }
-        }
-    } else if (rot == 180) {
-        outW = cropW;
-        outH = cropH;
-        rotated.resize(static_cast<size_t>(outW) * outH * 3);
-        for (int y = 0; y < cropH; ++y) {
-            for (int x = 0; x < cropW; ++x) {
-                size_t srcIdx = (static_cast<size_t>(y) * cropW + x) * 3;
-                size_t dstIdx = (static_cast<size_t>(cropH - 1 - y) * outW + (cropW - 1 - x)) * 3;
-                rotated[dstIdx] = cropped[srcIdx];
-                rotated[dstIdx + 1] = cropped[srcIdx + 1];
-                rotated[dstIdx + 2] = cropped[srcIdx + 2];
-            }
-        }
-    } else {
-        outW = cropW;
-        outH = cropH;
-        rotated = std::move(cropped);
-    }
-
-    // 11) 패치 추출 (patchSize > 0일 때만) — "100% 확인" 기능용. 전체 해상도 이미지를
-    // 그대로 Bitmap/GL 텍스처로 만들면 기기 텍스처 크기 한계에 걸릴 수 있으므로,
-    // 중심점 주변의 작은 영역만 잘라 반환한다. export(patchSize<=0)는 전체를 반환.
-    const uint8_t *finalBuf = rotated.data();
-    int finalW = outW, finalH = outH;
-    int outX = 0, outY = 0, outWidth = outW, outHeight = outH;
-    if (patchSize > 0) {
-        int cx = static_cast<int>(patchCenterX * outW);
-        int cy = static_cast<int>(patchCenterY * outH);
-        outWidth = std::min(patchSize, outW);
-        outHeight = std::min(patchSize, outH);
-        outX = std::max(0, std::min(cx - outWidth / 2, outW - outWidth));
-        outY = std::max(0, std::min(cy - outHeight / 2, outH - outHeight));
-    }
-
-    const size_t outCount = static_cast<size_t>(outWidth) * outHeight;
+    const size_t outCount = static_cast<size_t>(finalW) * finalH;
     std::vector<jint> argb(outCount);
-    for (int y = 0; y < outHeight; ++y) {
-        for (int x = 0; x < outWidth; ++x) {
-            size_t srcIdx = (static_cast<size_t>(outY + y) * finalW + (outX + x)) * 3;
-            size_t dstIdx = static_cast<size_t>(y) * outWidth + x;
-            argb[dstIdx] = static_cast<jint>(0xFF000000u |
-                                              (static_cast<uint32_t>(finalBuf[srcIdx]) << 16) |
-                                              (static_cast<uint32_t>(finalBuf[srcIdx + 1]) << 8) |
-                                              static_cast<uint32_t>(finalBuf[srcIdx + 2]));
-        }
+    for (size_t i = 0; i < outCount; ++i) {
+        size_t idx = i * 3;
+        argb[i] = static_cast<jint>(0xFF000000u |
+                                     (static_cast<uint32_t>(finalBuf[idx]) << 16) |
+                                     (static_cast<uint32_t>(finalBuf[idx + 1]) << 8) |
+                                     static_cast<uint32_t>(finalBuf[idx + 2]));
     }
-    (void) finalH;
 
     jintArray argbArray = env->NewIntArray(static_cast<jsize>(outCount));
     env->SetIntArrayRegion(argbArray, 0, static_cast<jsize>(outCount), argb.data());
 
     jclass processedImageClass = env->FindClass("com/rawlab/editor/raw/ProcessedImage");
     jmethodID ctor = env->GetMethodID(processedImageClass, "<init>", "(II[I)V");
-    return env->NewObject(processedImageClass, ctor, outWidth, outHeight, argbArray);
+    return env->NewObject(processedImageClass, ctor, finalW, finalH, argbArray);
 }
 
 // RGB 히스토그램(256구간 x 3채널)을 크롭 영역 기준, 현재 보정치를 반영해 계산한다.
