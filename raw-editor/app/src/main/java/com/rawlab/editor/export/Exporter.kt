@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import com.rawlab.editor.raw.EditState
+import com.rawlab.editor.raw.FilmSimLut
 import com.rawlab.editor.raw.RawDecoder
 import com.rawlab.editor.raw.RawProcessor
 import java.io.File
@@ -27,12 +28,14 @@ object Exporter {
             RawDecoder.decode(pfd.fd, 0)
         } ?: error("전체 해상도 RAW 디코딩 실패")
 
+        val filmLut = FilmSimLut.load(context, editState.filmSimulation) ?: FloatArray(0)
         val processed = RawProcessor.process(
             decoded.pixels, decoded.width, decoded.height,
             editState.exposure, editState.contrast, editState.temperature, editState.tint,
             editState.highlights, editState.shadows, editState.saturation, editState.vibrance,
             editState.sharpen,
             editState.curvePoints.toFloatArray(),
+            filmLut, FilmSimLut.LUT_SIZE, editState.filmSimStrength,
             editState.cropLeft, editState.cropTop, editState.cropRight, editState.cropBottom,
             editState.rotationDegrees,
         ) ?: error("이미지 보정 처리 실패")

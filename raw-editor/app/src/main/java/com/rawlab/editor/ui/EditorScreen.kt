@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,12 +41,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.rawlab.editor.R
 import com.rawlab.editor.gl.RawGLRenderer
+import com.rawlab.editor.raw.FilmSimLut
 import com.rawlab.editor.raw.ProcessedImage
 import com.rawlab.editor.raw.RawProcessor
 import kotlinx.coroutines.Dispatchers
@@ -77,11 +81,13 @@ fun EditorScreen(viewModel: EditorViewModel) {
         val state = uiState.editState
         histogramBins = withContext(Dispatchers.Default) {
             runCatching {
+                val filmLut = FilmSimLut.load(context, state.filmSimulation) ?: FloatArray(0)
                 RawProcessor.computeHistogram(
                     decoded.pixels, decoded.width, decoded.height,
                     state.exposure, state.contrast, state.temperature, state.tint,
                     state.highlights, state.shadows, state.saturation, state.vibrance,
                     state.curvePoints.toFloatArray(),
+                    filmLut, FilmSimLut.LUT_SIZE, state.filmSimStrength,
                     state.cropLeft, state.cropTop, state.cropRight, state.cropBottom,
                 )
             }.getOrNull()
@@ -144,6 +150,31 @@ fun EditorScreen(viewModel: EditorViewModel) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
+            Text(stringResource(R.string.editor_film_simulation), style = MaterialTheme.typography.labelMedium)
+            Row(modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())) {
+                FilmSimLut.NAMES.forEach { name ->
+                    val selected = uiState.editState.filmSimulation == name
+                    TextButton(onClick = {
+                        viewModel.updateEditState(uiState.editState.copy(filmSimulation = name))
+                    }) {
+                        Text(
+                            text = FilmSimLut.displayName(name),
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (selected) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                        )
+                    }
+                }
+            }
+            if (uiState.editState.filmSimulation != FilmSimLut.NONE) {
+                AdjustSlider(
+                    label = stringResource(R.string.editor_film_strength),
+                    value = uiState.editState.filmSimStrength,
+                    valueRange = 0f..1f,
+                ) { viewModel.updateEditState(uiState.editState.copy(filmSimStrength = it)) }
+            }
+
             Text(stringResource(R.string.editor_curve), style = MaterialTheme.typography.labelMedium)
             CurveEditor(
                 points = uiState.editState.curvePoints,

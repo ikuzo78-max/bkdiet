@@ -118,6 +118,47 @@ void readCurvePoints(JNIEnv *env, jfloatArray curvePointsIn, float out[5]) {
     for (int i = 0; i < 5; ++i) out[i] = buf[i];
 }
 
+// 필름 시뮬레이션 3D LUT (adjust.frag의 uFilmLut 트라이리니어 샘플링을 CPU로 재현).
+// lut는 FilmSimLut.kt와 동일한 순서(.cube 표준: R 최우선, G, B 순서로 바깥쪽)의
+// size*size*size*3 RGB(0..1) 배열. lut가 비어있거나 strength<=0이면 무보정.
+void applyFilmLut(float &r, float &g, float &b, const float *lut, int size, float strength) {
+    if (lut == nullptr || size <= 1 || strength <= 0.f) return;
+
+    float rf = clamp01(r) * (size - 1);
+    float gf = clamp01(g) * (size - 1);
+    float bf = clamp01(b) * (size - 1);
+    int r0 = static_cast<int>(rf), g0 = static_cast<int>(gf), b0 = static_cast<int>(bf);
+    int r1 = std::min(r0 + 1, size - 1);
+    int g1 = std::min(g0 + 1, size - 1);
+    int b1 = std::min(b0 + 1, size - 1);
+    float rt = rf - r0, gt = gf - g0, bt = bf - b0;
+
+    auto at = [&](int ri, int gi, int bi, int ch) -> float {
+        size_t idx = (static_cast<size_t>(bi) * size * size +
+                      static_cast<size_t>(gi) * size +
+                      static_cast<size_t>(ri)) * 3 + ch;
+        return lut[idx];
+    };
+
+    float outCh[3];
+    for (int ch = 0; ch < 3; ++ch) {
+        float c000 = at(r0, g0, b0, ch), c100 = at(r1, g0, b0, ch);
+        float c010 = at(r0, g1, b0, ch), c110 = at(r1, g1, b0, ch);
+        float c001 = at(r0, g0, b1, ch), c101 = at(r1, g0, b1, ch);
+        float c011 = at(r0, g1, b1, ch), c111 = at(r1, g1, b1, ch);
+        float c00 = c000 + (c100 - c000) * rt;
+        float c10 = c010 + (c110 - c010) * rt;
+        float c01 = c001 + (c101 - c001) * rt;
+        float c11 = c011 + (c111 - c011) * rt;
+        float c0 = c00 + (c10 - c00) * gt;
+        float c1 = c01 + (c11 - c01) * gt;
+        outCh[ch] = c0 + (c1 - c0) * bt;
+    }
+    r = r + (outCh[0] - r) * strength;
+    g = g + (outCh[1] - g) * strength;
+    b = b + (outCh[2] - b) * strength;
+}
+
 } // namespace
 
 extern "C"
@@ -128,6 +169,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     jfloat exposure, jfloat contrast, jfloat temperature, jfloat tint,
     jfloat highlights, jfloat shadows, jfloat saturation, jfloat vibrance, jfloat sharpen,
     jfloatArray curvePointsIn,
+    jfloatArray filmLutIn, jint filmLutSize, jfloat filmLutStrength,
     jfloat cropLeft, jfloat cropTop, jfloat cropRight, jfloat cropBottom,
     jint rotationDegrees,
     jfloat patchCenterX, jfloat patchCenterY, jint patchSize) {
@@ -139,6 +181,13 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     float curvePts[5];
     readCurvePoints(env, curvePointsIn, curvePts);
     CurveLut256 curve(curvePts);
+
+    jsize filmLutLen = env->GetArrayLength(filmLutIn);
+    std::vector<float> filmLut(static_cast<size_t>(filmLutLen));
+    if (filmLutLen > 0) {
+        env->GetFloatArrayRegion(filmLutIn, 0, filmLutLen, filmLut.data());
+    }
+    const float *filmLutPtr = filmLutLen > 0 ? filmLut.data() : nullptr;
 
     const float tempShift = temperature * 0.30f;
     const float tintShift = tint * 0.30f;
@@ -183,6 +232,12 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
                 g += (g - bg) * sharpen * 1.5f;
                 b += (b - bb) * sharpen * 1.5f;
             }
+            r = clamp01(r);
+            g = clamp01(g);
+            b = clamp01(b);
+
+            // 8) 필름 시뮬레이션 (3D LUT, 마지막에 "룩"으로 적용)
+            applyFilmLut(r, g, b, filmLutPtr, filmLutSize, filmLutStrength);
 
             finalPixels[idx] = static_cast<uint8_t>(clamp01(r) * 255.f + 0.5f);
             finalPixels[idx + 1] = static_cast<uint8_t>(clamp01(g) * 255.f + 0.5f);
@@ -190,7 +245,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
         }
     }
 
-    // 8) 크롭
+    // 9) 크롭
     int cropLeftPx = static_cast<int>(cropLeft * width + 0.5f);
     int cropTopPx = static_cast<int>(cropTop * height + 0.5f);
     int cropRightPx = static_cast<int>(cropRight * width + 0.5f);
@@ -210,7 +265,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
                   cropped.begin() + dstRow);
     }
 
-    // 9) 회전 (90도 단위만 지원)
+    // 10) 회전 (90도 단위만 지원)
     int rot = ((rotationDegrees % 360) + 360) % 360;
     std::vector<uint8_t> rotated;
     int outW, outH;
@@ -256,7 +311,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
         rotated = std::move(cropped);
     }
 
-    // 10) 패치 추출 (patchSize > 0일 때만) — "100% 확인" 기능용. 전체 해상도 이미지를
+    // 11) 패치 추출 (patchSize > 0일 때만) — "100% 확인" 기능용. 전체 해상도 이미지를
     // 그대로 Bitmap/GL 텍스처로 만들면 기기 텍스처 크기 한계에 걸릴 수 있으므로,
     // 중심점 주변의 작은 영역만 잘라 반환한다. export(patchSize<=0)는 전체를 반환.
     const uint8_t *finalBuf = rotated.data();
@@ -304,6 +359,7 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
     jfloat exposure, jfloat contrast, jfloat temperature, jfloat tint,
     jfloat highlights, jfloat shadows, jfloat saturation, jfloat vibrance,
     jfloatArray curvePointsIn,
+    jfloatArray filmLutIn, jint filmLutSize, jfloat filmLutStrength,
     jfloat cropLeft, jfloat cropTop, jfloat cropRight, jfloat cropBottom) {
 
     jsize len = env->GetArrayLength(pixelsIn);
@@ -313,6 +369,13 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
     float curvePts[5];
     readCurvePoints(env, curvePointsIn, curvePts);
     CurveLut256 curve(curvePts);
+
+    jsize filmLutLen = env->GetArrayLength(filmLutIn);
+    std::vector<float> filmLut(static_cast<size_t>(filmLutLen));
+    if (filmLutLen > 0) {
+        env->GetFloatArrayRegion(filmLutIn, 0, filmLutLen, filmLut.data());
+    }
+    const float *filmLutPtr = filmLutLen > 0 ? filmLut.data() : nullptr;
 
     const float tempShift = temperature * 0.30f;
     const float tintShift = tint * 0.30f;
@@ -333,6 +396,7 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
             float b = src[idx + 2] / 255.f;
             adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
                         contrast, saturation, vibrance, curve);
+            applyFilmLut(r, g, b, filmLutPtr, filmLutSize, filmLutStrength);
             bins[static_cast<int>(clamp01(r) * 255.f + 0.5f)] += 1;
             bins[256 + static_cast<int>(clamp01(g) * 255.f + 0.5f)] += 1;
             bins[512 + static_cast<int>(clamp01(b) * 255.f + 0.5f)] += 1;

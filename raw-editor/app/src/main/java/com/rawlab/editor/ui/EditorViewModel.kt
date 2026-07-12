@@ -9,6 +9,7 @@ import com.rawlab.editor.R
 import com.rawlab.editor.export.Exporter
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
+import com.rawlab.editor.raw.FilmSimLut
 import com.rawlab.editor.raw.ProcessedImage
 import com.rawlab.editor.raw.RawDecoder
 import com.rawlab.editor.raw.RawProcessor
@@ -133,6 +134,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     val decoded = context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                         RawDecoder.decode(pfd.fd, 0)
                     } ?: error("전체 해상도 RAW 디코딩 실패")
+                    val filmLut = FilmSimLut.load(context, state.editState.filmSimulation) ?: FloatArray(0)
                     RawProcessor.process(
                         decoded.pixels, decoded.width, decoded.height,
                         state.editState.exposure, state.editState.contrast,
@@ -140,6 +142,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         state.editState.highlights, state.editState.shadows,
                         state.editState.saturation, state.editState.vibrance, state.editState.sharpen,
                         state.editState.curvePoints.toFloatArray(),
+                        filmLut, FilmSimLut.LUT_SIZE, state.editState.filmSimStrength,
                         state.editState.cropLeft, state.editState.cropTop,
                         state.editState.cropRight, state.editState.cropBottom,
                         state.editState.rotationDegrees,

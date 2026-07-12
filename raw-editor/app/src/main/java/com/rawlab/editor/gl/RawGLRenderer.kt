@@ -7,6 +7,7 @@ import android.opengl.Matrix
 import com.rawlab.editor.raw.CurveLut
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
+import com.rawlab.editor.raw.FilmSimLut
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
@@ -26,6 +27,8 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var textureId = 0
     private var curveLutTextureId = 0
     private var lastCurvePoints: List<Float>? = null
+    private var filmLutTextureId = 0
+    private var lastFilmSimulation: String? = null
     private var imageWidth = 0
     private var imageHeight = 0
     private var pendingImage: DecodedRaw? = null
@@ -75,6 +78,22 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        val filmLutTexArr = IntArray(1)
+        GLES30.glGenTextures(1, filmLutTexArr, 0)
+        filmLutTextureId = filmLutTexArr[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, filmLutTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_R, GLES30.GL_CLAMP_TO_EDGE)
+        // strength=0일 때는 내용이 무의미하므로(mix로 걸러짐) 1x1x1 더미로 초기화해둔다.
+        GLES30.glTexImage3D(
+            GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB, 1, 1, 1, 0,
+            GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE,
+            ByteBuffer.wrap(byteArrayOf(0, 0, 0))
+        )
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -112,6 +131,13 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, curveLutTextureId)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uCurveLut"), 1)
 
+        updateFilmLutIfNeeded()
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, filmLutTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uFilmLut"), 2)
+        val filmStrength = if (editState.filmSimulation == FilmSimLut.NONE) 0f else editState.filmSimStrength
+        setFloat("uFilmLutStrength", filmStrength)
+
         val state = editState
         setFloat("uExposure", state.exposure)
         setFloat("uContrast", state.contrast)
@@ -141,6 +167,25 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
             GLES30.GL_TEXTURE_2D, 0, GLES30.GL_R8,
             256, 1, 0,
             GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, ByteBuffer.wrap(lut)
+        )
+    }
+
+    private fun updateFilmLutIfNeeded() {
+        val name = editState.filmSimulation
+        if (name == lastFilmSimulation) return
+        lastFilmSimulation = name
+        val lutFloats = FilmSimLut.load(context, name) ?: return
+
+        val size = FilmSimLut.LUT_SIZE
+        val bytes = ByteArray(lutFloats.size)
+        for (i in lutFloats.indices) {
+            bytes[i] = (lutFloats[i].coerceIn(0f, 1f) * 255f + 0.5f).toInt().coerceIn(0, 255).toByte()
+        }
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, filmLutTextureId)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+        GLES30.glTexImage3D(
+            GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB, size, size, size, 0,
+            GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE, ByteBuffer.wrap(bytes)
         )
     }
 

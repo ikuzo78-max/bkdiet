@@ -27,4 +27,8 @@ data class EditState(
      * 기본값(0,0.25,0.5,0.75,1.0)은 대각선(무보정)을 의미한다.
      */
     val curvePoints: List<Float> = listOf(0f, 0.25f, 0.5f, 0.75f, 1f),
+    /** FilmSimLut.NAMES 중 하나, "none"이면 미적용. */
+    val filmSimulation: String = FilmSimLut.NONE,
+    /** 필름 시뮬레이션 강도 0..1 (필름 미선택 시 무시됨). */
+    val filmSimStrength: Float = 1f,
 )

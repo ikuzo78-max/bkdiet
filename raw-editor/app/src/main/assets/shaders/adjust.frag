@@ -18,6 +18,8 @@ uniform float uSaturation;
 uniform float uVibrance;
 uniform float uSharpen;
 uniform sampler2D uCurveLut; // 256x1 LUT, R 채널만 사용
+uniform mediump sampler3D uFilmLut; // 32x32x32 필름 시뮬레이션 3D LUT
+uniform float uFilmLutStrength;     // 0 = 미적용
 
 vec3 srgbToLinear(vec3 c) {
     return pow(max(c, 0.0), vec3(2.2));
@@ -78,6 +80,13 @@ void main() {
         sum += texture(uTexture, vUv + vec2(0.0, uTexelSize.y)).rgb;
         vec3 blurred = sum * 0.25;
         color += (color - blurred) * uSharpen * 1.5;
+    }
+    color = clamp(color, 0.0, 1.0);
+
+    // 8) 필름 시뮬레이션 (3D LUT, 마지막에 "룩"으로 적용)
+    if (uFilmLutStrength > 0.0) {
+        vec3 graded = texture(uFilmLut, color).rgb;
+        color = mix(color, graded, uFilmLutStrength);
     }
 
     fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);

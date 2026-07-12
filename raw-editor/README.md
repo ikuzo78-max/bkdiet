@@ -118,12 +118,20 @@ RGB8 버퍼만 ~300MB고, 보급형/구형 기기의 `GL_MAX_TEXTURE_SIZE`(보�
 - 톤커브는 RGB 통합 커브(5점, 구간별 선형보간)만 지원 — R/G/B 개별 채널 커브는 아직 없음.
 - 히스토그램은 프록시(축소) 버퍼 기준으로 계산 — 통계적으로는 충분히 대표성 있지만
   1px 단위 정밀도는 아님.
-- 필름 시뮬레이션 3D LUT, AI 마스킹(하늘/인물 등 영역별 보정), 데이트 스탬프, 즐겨찾기/필터,
-  저장 경로·포맷 선택, 배치 처리, 16bit 선형 파이프라인, 자동 테스트/CI는 아직 없음 —
-  FilmRawstery 원본에 있는 기능들이라 다음 단계로 논의 중.
+- 필름 시뮬레이션은 11종(Provia/Velvia/Astia/Classic Chrome/Classic Neg/Nostalgic Neg/
+  Pro Neg Std·Hi/Eterna/Reala Ace/Bleach Bypass) 3D LUT를 지원한다. LUT 파일
+  (`assets/luts/*.cube`)은 [abpy/FujifilmCameraProfiles](https://github.com/abpy/FujifilmCameraProfiles)
+  에서 가져왔으며 **CC BY-NC-SA 4.0**(비영리 한정, 출처 표시 필수)이다 —
+  자세한 조건은 `assets/luts/LICENSE-LUTS.md` 참고. RawLab을 상업적으로 배포할
+  계획이 있다면 이 LUT들은 제외하거나 별도 라이선스를 확인해야 한다.
+- AI 마스킹(하늘/인물 등 영역별 보정)은 사용자 요청으로 범위에서 제외했다.
+- 데이트 스탬프, 즐겨찾기/필터, 저장 경로·포맷 선택, 배치 처리, 16bit 선형 파이프라인,
+  R/G/B 개별 채널 커브, 자동 테스트/CI는 아직 없음.
 
 ## 참고한 레퍼런스
 
-[lim8701/FilmRawstery](https://github.com/lim8701/FilmRawstery) (데스크톱 후지필름
-RAF 편집기)의 rawpy/LibRaw 디코딩 선택, 셰이더 보정 순서, "프리뷰=export 동일 수식",
-JSON 사이드카 비파괴 편집 방식을 참고해 이 프로젝트 구조에 반영했습니다.
+- [lim8701/FilmRawstery](https://github.com/lim8701/FilmRawstery) (데스크톱 후지필름
+  RAF 편집기)의 rawpy/LibRaw 디코딩 선택, 셰이더 보정 순서, "프리뷰=export 동일 수식",
+  JSON 사이드카 비파괴 편집 방식을 참고해 이 프로젝트 구조에 반영했습니다.
+- [abpy/FujifilmCameraProfiles](https://github.com/abpy/FujifilmCameraProfiles) —
+  필름 시뮬레이션 3D LUT 출처 (CC BY-NC-SA 4.0, `assets/luts/LICENSE-LUTS.md` 참고).

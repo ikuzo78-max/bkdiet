@@ -26,4 +26,6 @@
     <string name="editor_loupe">100%</string>
     <string name="editor_loupe_loading">원본 해상도 불러오는 중…</string>
     <string name="editor_loupe_close">닫기</string>
+    <string name="editor_film_simulation">필름 시뮬레이션</string>
+    <string name="editor_film_strength">강도</string>
 </resources>
