@@ -17,6 +17,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** 프리뷰 디코드 시 긴 변 최대 크기(px). GFX100RF 같은 1억 화소급 RAW도 실시간 편집이
+ *  가능하도록 축소 프록시로 디코드한다 — 전체 해상도는 export 시에만 다시 디코드한다. */
+private const val PREVIEW_MAX_DIMENSION = 2048
+
 data class RawLabUiState(
     val decoded: DecodedRaw? = null,
     val editState: EditState = EditState(),
@@ -24,6 +28,7 @@ data class RawLabUiState(
     val errorMessage: String? = null,
     val isExporting: Boolean = false,
     val exportMessage: String? = null,
+    val sourceUri: Uri? = null,
     val sourceDisplayName: String = "rawlab",
 )
 
@@ -40,7 +45,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val decoded = withContext(Dispatchers.IO) {
                 runCatching {
                     context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                        RawDecoder.decode(pfd.fd)
+                        RawDecoder.decode(pfd.fd, PREVIEW_MAX_DIMENSION)
                     }
                 }.getOrNull()
             }
@@ -54,6 +59,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         isLoading = false,
                         decoded = decoded,
                         editState = EditState(),
+                        sourceUri = uri,
                         sourceDisplayName = displayName,
                     )
                 }
@@ -82,12 +88,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun export() {
         val state = _uiState.value
-        val decoded = state.decoded ?: return
+        val uri = state.sourceUri ?: return
         _uiState.update { it.copy(isExporting = true, exportMessage = null) }
         viewModelScope.launch {
             val context = getApplication<Application>()
+            // 전체 해상도는 여기서 다시 디코드한다 (프리뷰는 PREVIEW_MAX_DIMENSION으로
+            // 축소된 프록시라 그대로 저장하면 원본 화소를 잃는다).
             val result = withContext(Dispatchers.Default) {
-                runCatching { Exporter.export(context, decoded, state.editState, state.sourceDisplayName) }
+                runCatching { Exporter.export(context, uri, state.editState, state.sourceDisplayName) }
             }
             _uiState.update {
                 it.copy(

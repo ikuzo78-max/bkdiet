@@ -1,5 +1,7 @@
 #include <jni.h>
 #include <unistd.h>
+#include <algorithm>
+#include <utility>
 #include <vector>
 #include <android/log.h>
 #include <libraw/libraw.h>
@@ -31,11 +33,41 @@ bool readAll(int fd, std::vector<uint8_t> &out) {
     return true;
 }
 
+// 정수 배율(factor)만큼 박스 평균으로 축소한다. GFX100RF(1억 화소) 같은 대형 센서를
+// 프리뷰용으로 안전한 크기까지 줄이기 위함 (GPU 텍스처 최대 크기, 메모리 제한 회피).
+void downsampleBox(const std::vector<uint8_t> &src, int srcW, int srcH,
+                    std::vector<uint8_t> &dst, int &dstW, int &dstH, int factor) {
+    dstW = srcW / factor;
+    dstH = srcH / factor;
+    dst.resize(static_cast<size_t>(dstW) * dstH * 3);
+
+    for (int y = 0; y < dstH; ++y) {
+        for (int x = 0; x < dstW; ++x) {
+            int rSum = 0, gSum = 0, bSum = 0;
+            for (int dy = 0; dy < factor; ++dy) {
+                for (int dx = 0; dx < factor; ++dx) {
+                    size_t srcIdx = (static_cast<size_t>(y * factor + dy) * srcW +
+                                      (x * factor + dx)) * 3;
+                    rSum += src[srcIdx];
+                    gSum += src[srcIdx + 1];
+                    bSum += src[srcIdx + 2];
+                }
+            }
+            int count = factor * factor;
+            size_t dstIdx = (static_cast<size_t>(y) * dstW + x) * 3;
+            dst[dstIdx] = static_cast<uint8_t>(rSum / count);
+            dst[dstIdx + 1] = static_cast<uint8_t>(gSum / count);
+            dst[dstIdx + 2] = static_cast<uint8_t>(bSum / count);
+        }
+    }
+}
+
 } // namespace
 
 extern "C"
 JNIEXPORT jobject JNICALL
-Java_com_rawlab_editor_raw_RawDecoder_decode(JNIEnv *env, jobject /*thiz*/, jint fd) {
+Java_com_rawlab_editor_raw_RawDecoder_decode(JNIEnv *env, jobject /*thiz*/, jint fd,
+                                              jint maxDimension) {
     std::vector<uint8_t> buffer;
     if (!readAll(fd, buffer)) {
         return nullptr;
@@ -47,6 +79,9 @@ Java_com_rawlab_editor_raw_RawDecoder_decode(JNIEnv *env, jobject /*thiz*/, jint
     processor.imgdata.params.output_color = 1;   // sRGB
     processor.imgdata.params.output_bps = 8;      // 8bit/채널 (v0.1 범위)
     processor.imgdata.params.user_qual = 3;       // AHD 디모자이킹
+    // 프리뷰 요청(maxDimension > 0)이면 LibRaw 자체 half-size 디코드로 4배 더 빠르고
+    // 가볍게 뽑는다. 전체 해상도가 필요한 export는 maxDimension == 0으로 호출한다.
+    processor.imgdata.params.half_size = (maxDimension > 0) ? 1 : 0;
 
     int err = processor.open_buffer(buffer.data(), buffer.size());
     if (err != LIBRAW_SUCCESS) {
@@ -74,15 +109,30 @@ Java_com_rawlab_editor_raw_RawDecoder_decode(JNIEnv *env, jobject /*thiz*/, jint
         return nullptr;
     }
 
-    jbyteArray pixels = env->NewByteArray(static_cast<jsize>(image->data_size));
-    env->SetByteArrayRegion(pixels, 0, static_cast<jsize>(image->data_size),
-                            reinterpret_cast<jbyte *>(image->data));
-
-    jint width = image->width;
-    jint height = image->height;
+    std::vector<uint8_t> pixels(image->data, image->data + image->data_size);
+    int width = image->width;
+    int height = image->height;
     LibRaw::dcraw_clear_mem(image);
+    processor.recycle();
+
+    if (maxDimension > 0) {
+        int longSide = std::max(width, height);
+        int factor = (longSide + maxDimension - 1) / maxDimension; // ceil
+        if (factor > 1) {
+            std::vector<uint8_t> downsampled;
+            int newW, newH;
+            downsampleBox(pixels, width, height, downsampled, newW, newH, factor);
+            pixels = std::move(downsampled);
+            width = newW;
+            height = newH;
+        }
+    }
+
+    jbyteArray pixelArray = env->NewByteArray(static_cast<jsize>(pixels.size()));
+    env->SetByteArrayRegion(pixelArray, 0, static_cast<jsize>(pixels.size()),
+                            reinterpret_cast<jbyte *>(pixels.data()));
 
     jclass decodedRawClass = env->FindClass("com/rawlab/editor/raw/DecodedRaw");
     jmethodID ctor = env->GetMethodID(decodedRawClass, "<init>", "(II[B)V");
-    return env->NewObject(decodedRawClass, ctor, width, height, pixels);
+    return env->NewObject(decodedRawClass, ctor, width, height, pixelArray);
 }

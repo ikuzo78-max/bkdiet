@@ -30,5 +30,5 @@ target_compile_definitions(libraw PUBLIC
 )
 target_link_libraries(libraw PUBLIC z)
 
-add_library(rawcore SHARED raw_jni.cpp)
+add_library(rawcore SHARED raw_jni.cpp raw_process.cpp)
 target_link_libraries(rawcore PRIVATE libraw log)

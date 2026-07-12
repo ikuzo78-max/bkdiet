@@ -60,7 +60,13 @@ fun EditorScreen(viewModel: EditorViewModel) {
                     Text(stringResource(R.string.editor_reset))
                 }
                 TextButton(onClick = { viewModel.export() }, enabled = !uiState.isExporting) {
-                    Text(stringResource(R.string.editor_export))
+                    Text(
+                        if (uiState.isExporting) {
+                            stringResource(R.string.editor_exporting)
+                        } else {
+                            stringResource(R.string.editor_export)
+                        }
+                    )
                 }
             }
         )
