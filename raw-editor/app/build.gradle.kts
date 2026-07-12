@@ -8,6 +8,8 @@ plugins {
 android {
     namespace = "com.rawlab.editor"
     compileSdk = 35
+    // CI(GitHub Actions)와 로컬 Android Studio가 같은 NDK를 쓰도록 고정.
+    ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "com.rawlab.editor"

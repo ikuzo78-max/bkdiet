@@ -10,7 +10,27 @@ Kotlin + Jetpack Compose UI, LibRaw(NDK/JNI)로 RAW 디코딩, OpenGL ES 3.0 셰
 RAW를 촬영/보정하려는 워크플로를 염두에 두고 설계했습니다 — 그래서 프리뷰와
 export의 처리 경로를 의도적으로 분리했습니다 (아래 아키텍처 참고).
 
-## 빌드 요구사항
+## 폰에서 바로 설치하기 (PC 없이)
+
+이 저장소에는 GitHub Actions 워크플로(`.github/workflows/build-rawlab-apk.yml`)가 있어서
+`claude/mobile-raw-image-editor-mjizrj` 브랜치에 코드가 푸시될 때마다 클라우드에서
+자동으로 APK를 빌드하고, GitHub Releases의 `rawlab-debug` 태그에 최신 APK를 올려줍니다.
+
+1. 폰 브라우저로 GitHub 저장소의 **Releases** 탭으로 이동 (`https://github.com/ikuzo78-max/bkdiet/releases`)
+2. `RawLab 자동 빌드 (debug)` 릴리스에서 `app-debug.apk` 다운로드
+3. 처음 설치할 때는 안드로이드가 "출처를 알 수 없는 앱" 설치를 막을 수 있습니다 —
+   설정에서 해당 브라우저(또는 파일 관리자)에 "알 수 없는 앱 설치" 권한을 한 번
+   허용해주면 됩니다
+4. 다운로드한 APK를 열어 설치
+
+빌드가 실패하면 저장소의 **Actions** 탭에서 로그를 확인할 수 있습니다. 코드가 바뀔
+때마다 자동으로 다시 빌드되고, Actions 탭에서 `workflow_dispatch`로 수동 재실행도
+가능합니다.
+
+이 방식은 디버그 서명(자동 생성되는 디버그 키)만 사용하는 개인 테스트용 APK입니다 —
+Play 스토어 배포용이 아닙니다.
+
+## 빌드 요구사항 (직접 Android Studio로 빌드할 경우)
 
 - Android Studio (최신 안정 버전 권장, Ladybug 이상)
 - JDK 17

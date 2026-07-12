@@ -1,0 +1,65 @@
+name: Build RawLab APK
+
+on:
+  push:
+    branches:
+      - claude/mobile-raw-image-editor-mjizrj
+    paths:
+      - "raw-editor/**"
+      - ".github/workflows/build-rawlab-apk.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK & CMake
+        run: sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('raw-editor/gradle/wrapper/gradle-wrapper.properties', 'raw-editor/gradle/libs.versions.toml') }}
+
+      - name: Build debug APK
+        working-directory: raw-editor
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rawlab-debug-apk
+          path: raw-editor/app/build/outputs/apk/debug/app-debug.apk
+
+      # 폰 브라우저에서 zip 압축 풀 필요 없이 바로 APK를 받을 수 있도록
+      # 고정 태그(rawlab-debug)로 릴리스를 만들고 매번 최신 APK로 덮어쓴다.
+      - name: Publish latest debug APK to Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rawlab-debug
+          name: "RawLab 자동 빌드 (debug)"
+          body: |
+            커밋 ${{ github.sha }} 기준 자동 빌드된 디버그 APK입니다.
+            안드로이드에서 다운로드한 뒤 "출처를 알 수 없는 앱 설치"를 허용하고 설치하세요.
+          make_latest: true
+          files: raw-editor/app/build/outputs/apk/debug/app-debug.apk
