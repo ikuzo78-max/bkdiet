@@ -22,4 +22,9 @@ data class EditState(
     val cropTop: Float = 0f,
     val cropRight: Float = 1f,
     val cropBottom: Float = 1f,
+    /**
+     * 톤커브 조절점의 출력값(y, 0..1). x는 항상 0, 0.25, 0.5, 0.75, 1.0 고정.
+     * 기본값(0,0.25,0.5,0.75,1.0)은 대각선(무보정)을 의미한다.
+     */
+    val curvePoints: List<Float> = listOf(0f, 0.25f, 0.5f, 0.75f, 1f),
 )

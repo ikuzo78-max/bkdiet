@@ -32,6 +32,7 @@ object Exporter {
             editState.exposure, editState.contrast, editState.temperature, editState.tint,
             editState.highlights, editState.shadows, editState.saturation, editState.vibrance,
             editState.sharpen,
+            editState.curvePoints.toFloatArray(),
             editState.cropLeft, editState.cropTop, editState.cropRight, editState.cropBottom,
             editState.rotationDegrees,
         ) ?: error("이미지 보정 처리 실패")

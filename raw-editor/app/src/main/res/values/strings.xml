@@ -21,4 +21,9 @@
     <string name="export_success">저장 완료: Pictures/RawLab</string>
     <string name="export_failure">저장 실패</string>
     <string name="decode_failure">RAW 디코딩 실패</string>
+    <string name="editor_curve">톤커브</string>
+    <string name="editor_histogram">히스토그램</string>
+    <string name="editor_loupe">100%</string>
+    <string name="editor_loupe_loading">원본 해상도 불러오는 중…</string>
+    <string name="editor_loupe_close">닫기</string>
 </resources>

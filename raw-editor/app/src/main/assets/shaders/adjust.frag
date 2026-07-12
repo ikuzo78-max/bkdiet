@@ -17,6 +17,7 @@ uniform float uShadows;
 uniform float uSaturation;
 uniform float uVibrance;
 uniform float uSharpen;
+uniform sampler2D uCurveLut; // 256x1 LUT, R 채널만 사용
 
 vec3 srgbToLinear(vec3 c) {
     return pow(max(c, 0.0), vec3(2.2));
@@ -63,7 +64,12 @@ void main() {
     float existingSat = maxC - minC;
     color = mix(color, mix(vec3(gray), color, 1.0 + uVibrance), 1.0 - existingSat);
 
-    // 6) 샤픈: 인접 4픽셀 평균 대비 언샵 마스크
+    // 6) 톤커브 (구간별 선형보간 LUT, RGB 동일 커브)
+    color.r = texture(uCurveLut, vec2(color.r, 0.5)).r;
+    color.g = texture(uCurveLut, vec2(color.g, 0.5)).r;
+    color.b = texture(uCurveLut, vec2(color.b, 0.5)).r;
+
+    // 7) 샤픈: 인접 4픽셀 평균 대비 언샵 마스크
     if (uSharpen > 0.0) {
         vec3 sum = vec3(0.0);
         sum += texture(uTexture, vUv + vec2(-uTexelSize.x, 0.0)).rgb;

@@ -4,6 +4,7 @@ import android.content.Context
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
+import com.rawlab.editor.raw.CurveLut
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
 import java.nio.ByteBuffer
@@ -23,6 +24,8 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var program = 0
     private var vbo = 0
     private var textureId = 0
+    private var curveLutTextureId = 0
+    private var lastCurvePoints: List<Float>? = null
     private var imageWidth = 0
     private var imageHeight = 0
     private var pendingImage: DecodedRaw? = null
@@ -63,6 +66,15 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        val curveTexArr = IntArray(1)
+        GLES30.glGenTextures(1, curveTexArr, 0)
+        curveLutTextureId = curveTexArr[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, curveLutTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -95,6 +107,11 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         )
         GLES30.glUniformMatrix4fv(GLES30.glGetUniformLocation(program, "uMvp"), 1, false, mvpMatrix, 0)
 
+        updateCurveLutIfNeeded()
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, curveLutTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uCurveLut"), 1)
+
         val state = editState
         setFloat("uExposure", state.exposure)
         setFloat("uContrast", state.contrast)
@@ -111,6 +128,20 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     private fun setFloat(name: String, value: Float) {
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program, name), value)
+    }
+
+    private fun updateCurveLutIfNeeded() {
+        val points = editState.curvePoints
+        if (points == lastCurvePoints) return
+        lastCurvePoints = points
+        val lut = CurveLut.build256(points)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, curveLutTextureId)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_R8,
+            256, 1, 0,
+            GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, ByteBuffer.wrap(lut)
+        )
     }
 
     private fun uploadPendingImageIfAny() {

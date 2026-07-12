@@ -26,11 +26,39 @@ inline float luminance(float r, float g, float b) {
     return 0.2126f * r + 0.7152f * g + 0.0722f * b;
 }
 
-// 셰이더의 1~5단계(화이트밸런스/노출/하이라이트-섀도우/대비/채도-생동감)를 픽셀 하나에 적용.
+// CurveLut.kt와 동일한 구간별 선형보간. x는 항상 0/0.25/0.5/0.75/1 고정.
+struct CurveLut256 {
+    float values[256];
+
+    explicit CurveLut256(const float points[5]) {
+        const float xs[5] = {0.f, 0.25f, 0.5f, 0.75f, 1.f};
+        for (int i = 0; i < 256; ++i) {
+            float x = i / 255.f;
+            int seg = 3;
+            for (int s = 0; s < 4; ++s) {
+                if (x <= xs[s + 1]) {
+                    seg = s;
+                    break;
+                }
+            }
+            float x0 = xs[seg], x1 = xs[seg + 1];
+            float y0 = points[seg], y1 = points[seg + 1];
+            float t = (x1 > x0) ? (x - x0) / (x1 - x0) : 0.f;
+            values[i] = y0 + (y1 - y0) * t;
+        }
+    }
+
+    inline float apply(float v) const {
+        int idx = static_cast<int>(clamp01(v) * 255.f + 0.5f);
+        return values[idx];
+    }
+};
+
+// 셰이더의 1~6단계(화이트밸런스/노출/하이라이트-섀도우/대비/채도-생동감/톤커브)를 픽셀 하나에 적용.
 void adjustPixel(float &r, float &g, float &b,
                   float tempShift, float tintShift, float evScale,
                   float highlights, float shadows, float contrast,
-                  float saturation, float vibrance) {
+                  float saturation, float vibrance, const CurveLut256 &curve) {
     // 1) 화이트 밸런스
     r *= (1.f + tempShift);
     b *= (1.f - tempShift);
@@ -76,6 +104,18 @@ void adjustPixel(float &r, float &g, float &b,
     r = r + (vr - r) * (1.f - existingSat);
     g = g + (vg - g) * (1.f - existingSat);
     b = b + (vb - b) * (1.f - existingSat);
+
+    // 6) 톤커브
+    r = curve.apply(r);
+    g = curve.apply(g);
+    b = curve.apply(b);
+}
+
+void readCurvePoints(JNIEnv *env, jfloatArray curvePointsIn, float out[5]) {
+    jsize n = env->GetArrayLength(curvePointsIn);
+    jfloat buf[5] = {0.f, 0.25f, 0.5f, 0.75f, 1.f};
+    env->GetFloatArrayRegion(curvePointsIn, 0, std::min(n, static_cast<jsize>(5)), buf);
+    for (int i = 0; i < 5; ++i) out[i] = buf[i];
 }
 
 } // namespace
@@ -87,12 +127,18 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     jbyteArray pixelsIn, jint width, jint height,
     jfloat exposure, jfloat contrast, jfloat temperature, jfloat tint,
     jfloat highlights, jfloat shadows, jfloat saturation, jfloat vibrance, jfloat sharpen,
+    jfloatArray curvePointsIn,
     jfloat cropLeft, jfloat cropTop, jfloat cropRight, jfloat cropBottom,
-    jint rotationDegrees) {
+    jint rotationDegrees,
+    jfloat patchCenterX, jfloat patchCenterY, jint patchSize) {
 
     jsize len = env->GetArrayLength(pixelsIn);
     std::vector<uint8_t> src(static_cast<size_t>(len));
     env->GetByteArrayRegion(pixelsIn, 0, len, reinterpret_cast<jbyte *>(src.data()));
+
+    float curvePts[5];
+    readCurvePoints(env, curvePointsIn, curvePts);
+    CurveLut256 curve(curvePts);
 
     const float tempShift = temperature * 0.30f;
     const float tintShift = tint * 0.30f;
@@ -107,13 +153,13 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
         float g = src[idx + 1] / 255.f;
         float b = src[idx + 2] / 255.f;
         adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
-                    contrast, saturation, vibrance);
+                    contrast, saturation, vibrance, curve);
         adjusted[idx] = r;
         adjusted[idx + 1] = g;
         adjusted[idx + 2] = b;
     }
 
-    // 6) 샤픈: 셰이더와 동일하게 "원본(src)" 이웃 4픽셀 평균 대비 언샵마스크를
+    // 7) 샤픈: 셰이더와 동일하게 "원본(src)" 이웃 4픽셀 평균 대비 언샵마스크를
     // 보정된(adjusted) 픽셀에 더한다.
     std::vector<uint8_t> finalPixels(pixelCount * 3);
     for (int y = 0; y < height; ++y) {
@@ -144,7 +190,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
         }
     }
 
-    // 7) 크롭
+    // 8) 크롭
     int cropLeftPx = static_cast<int>(cropLeft * width + 0.5f);
     int cropTopPx = static_cast<int>(cropTop * height + 0.5f);
     int cropRightPx = static_cast<int>(cropRight * width + 0.5f);
@@ -164,7 +210,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
                   cropped.begin() + dstRow);
     }
 
-    // 8) 회전 (90도 단위만 지원)
+    // 9) 회전 (90도 단위만 지원)
     int rot = ((rotationDegrees % 360) + 360) % 360;
     std::vector<uint8_t> rotated;
     int outW, outH;
@@ -210,20 +256,90 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
         rotated = std::move(cropped);
     }
 
-    const size_t outCount = static_cast<size_t>(outW) * outH;
-    std::vector<jint> argb(outCount);
-    for (size_t i = 0; i < outCount; ++i) {
-        size_t idx = i * 3;
-        argb[i] = static_cast<jint>(0xFF000000u |
-                                     (static_cast<uint32_t>(rotated[idx]) << 16) |
-                                     (static_cast<uint32_t>(rotated[idx + 1]) << 8) |
-                                     static_cast<uint32_t>(rotated[idx + 2]));
+    // 10) 패치 추출 (patchSize > 0일 때만) — "100% 확인" 기능용. 전체 해상도 이미지를
+    // 그대로 Bitmap/GL 텍스처로 만들면 기기 텍스처 크기 한계에 걸릴 수 있으므로,
+    // 중심점 주변의 작은 영역만 잘라 반환한다. export(patchSize<=0)는 전체를 반환.
+    const uint8_t *finalBuf = rotated.data();
+    int finalW = outW, finalH = outH;
+    int outX = 0, outY = 0, outWidth = outW, outHeight = outH;
+    if (patchSize > 0) {
+        int cx = static_cast<int>(patchCenterX * outW);
+        int cy = static_cast<int>(patchCenterY * outH);
+        outWidth = std::min(patchSize, outW);
+        outHeight = std::min(patchSize, outH);
+        outX = std::max(0, std::min(cx - outWidth / 2, outW - outWidth));
+        outY = std::max(0, std::min(cy - outHeight / 2, outH - outHeight));
     }
+
+    const size_t outCount = static_cast<size_t>(outWidth) * outHeight;
+    std::vector<jint> argb(outCount);
+    for (int y = 0; y < outHeight; ++y) {
+        for (int x = 0; x < outWidth; ++x) {
+            size_t srcIdx = (static_cast<size_t>(outY + y) * finalW + (outX + x)) * 3;
+            size_t dstIdx = static_cast<size_t>(y) * outWidth + x;
+            argb[dstIdx] = static_cast<jint>(0xFF000000u |
+                                              (static_cast<uint32_t>(finalBuf[srcIdx]) << 16) |
+                                              (static_cast<uint32_t>(finalBuf[srcIdx + 1]) << 8) |
+                                              static_cast<uint32_t>(finalBuf[srcIdx + 2]));
+        }
+    }
+    (void) finalH;
 
     jintArray argbArray = env->NewIntArray(static_cast<jsize>(outCount));
     env->SetIntArrayRegion(argbArray, 0, static_cast<jsize>(outCount), argb.data());
 
     jclass processedImageClass = env->FindClass("com/rawlab/editor/raw/ProcessedImage");
     jmethodID ctor = env->GetMethodID(processedImageClass, "<init>", "(II[I)V");
-    return env->NewObject(processedImageClass, ctor, outW, outH, argbArray);
+    return env->NewObject(processedImageClass, ctor, outWidth, outHeight, argbArray);
+}
+
+// RGB 히스토그램(256구간 x 3채널)을 크롭 영역 기준, 현재 보정치를 반영해 계산한다.
+// 프록시(축소본) 버퍼에서 호출되는 것을 전제로 하며(실시간성 확보), 회전/샤픈은 통계에
+// 영향이 없거나 미미해 계산에서 제외한다.
+extern "C"
+JNIEXPORT jintArray JNICALL
+Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
+    JNIEnv *env, jobject /*thiz*/,
+    jbyteArray pixelsIn, jint width, jint height,
+    jfloat exposure, jfloat contrast, jfloat temperature, jfloat tint,
+    jfloat highlights, jfloat shadows, jfloat saturation, jfloat vibrance,
+    jfloatArray curvePointsIn,
+    jfloat cropLeft, jfloat cropTop, jfloat cropRight, jfloat cropBottom) {
+
+    jsize len = env->GetArrayLength(pixelsIn);
+    std::vector<uint8_t> src(static_cast<size_t>(len));
+    env->GetByteArrayRegion(pixelsIn, 0, len, reinterpret_cast<jbyte *>(src.data()));
+
+    float curvePts[5];
+    readCurvePoints(env, curvePointsIn, curvePts);
+    CurveLut256 curve(curvePts);
+
+    const float tempShift = temperature * 0.30f;
+    const float tintShift = tint * 0.30f;
+    const float evScale = powf(2.f, exposure * 3.f);
+
+    int cropLeftPx = std::max(0, std::min(static_cast<int>(cropLeft * width + 0.5f), width - 1));
+    int cropTopPx = std::max(0, std::min(static_cast<int>(cropTop * height + 0.5f), height - 1));
+    int cropRightPx = std::max(cropLeftPx + 1, std::min(static_cast<int>(cropRight * width + 0.5f), width));
+    int cropBottomPx = std::max(cropTopPx + 1, std::min(static_cast<int>(cropBottom * height + 0.5f), height));
+
+    std::vector<jint> bins(768, 0); // [0..255]=R, [256..511]=G, [512..767]=B
+
+    for (int y = cropTopPx; y < cropBottomPx; ++y) {
+        for (int x = cropLeftPx; x < cropRightPx; ++x) {
+            size_t idx = (static_cast<size_t>(y) * width + x) * 3;
+            float r = src[idx] / 255.f;
+            float g = src[idx + 1] / 255.f;
+            float b = src[idx + 2] / 255.f;
+            adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
+                        contrast, saturation, vibrance, curve);
+            bins[static_cast<int>(clamp01(r) * 255.f + 0.5f)] += 1;
+            bins[256 + static_cast<int>(clamp01(g) * 255.f + 0.5f)] += 1;
+            bins[512 + static_cast<int>(clamp01(b) * 255.f + 0.5f)] += 1;
+        }
+    }
+
+    jintArray result = env->NewIntArray(768);
+    env->SetIntArrayRegion(result, 0, 768, bins.data());
+    return result;
 }

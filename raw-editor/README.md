@@ -53,23 +53,35 @@ app/src/main/
   cpp/
     CMakeLists.txt      # LibRaw FetchContent + rawcore.so 빌드
     raw_jni.cpp         # JNI: RAW 파일(fd) -> 8bit sRGB RGB 버퍼 (프록시/원본 해상도)
-    raw_process.cpp     # JNI: 보정+크롭+회전을 CPU에서 전체 해상도로 처리 (export 전용)
+    raw_process.cpp     # JNI: 보정+톤커브+크롭+회전을 CPU에서 전체 해상도로 처리 (export/100%확인),
+                        # 히스토그램 계산도 여기서 담당
   java/com/rawlab/editor/
     MainActivity.kt
     raw/RawDecoder.kt     # JNI 디코더 래퍼
     raw/DecodedRaw.kt     # 디코드 결과 (width, height, RGB8 pixels)
-    raw/RawProcessor.kt   # JNI 전체해상도 보정 래퍼 (export 전용)
+    raw/RawProcessor.kt   # JNI 전체해상도 보정/히스토그램 래퍼
     raw/ProcessedImage.kt # 보정 결과 (width, height, ARGB8888 pixels)
-    raw/EditState.kt      # 비파괴 편집 파라미터
+    raw/EditState.kt      # 비파괴 편집 파라미터 (톤커브 포함)
+    raw/CurveLut.kt       # 톤커브 5점 -> 256단계 LUT (구간별 선형보간, GL 텍스처용)
     gl/RawGLRenderer.kt   # GLSurfaceView.Renderer, 실시간 프리뷰(프록시 해상도)
     gl/ShaderUtils.kt     # 셰이더 컴파일/링크 공용 헬퍼
     ui/HomeScreen.kt       # SAF로 RAW 파일 선택
-    ui/EditorScreen.kt     # 프리뷰 + 슬라이더 + 회전/export
-    ui/EditorViewModel.kt  # 원본 Uri 보관, 프리뷰/export 트리거
+    ui/EditorScreen.kt     # 프리뷰 + 슬라이더 + 톤커브 + 히스토그램 + 100%확인 + 회전/export
+    ui/CurveEditor.kt      # 5점 드래그 톤커브 에디터 (Canvas)
+    ui/HistogramView.kt    # RGB 히스토그램 오버레이 (Canvas)
+    ui/EditorViewModel.kt  # 원본 Uri 보관, 프리뷰/export/100%확인 트리거
     export/Exporter.kt     # 원본 Uri 재디코드(전체 해상도) -> RawProcessor -> JPEG -> MediaStore
   assets/shaders/
-    adjust.vert / adjust.frag  # 프리뷰 GPU 셰이더 (raw_process.cpp가 같은 공식을 CPU로 재현)
+    adjust.vert / adjust.frag  # 프리뷰 GPU 셰이더 (raw_process.cpp가 같은 공식을 CPU로 재현,
+                                # 톤커브는 256x1 LUT 텍스처로 샘플링)
 ```
+
+### 100% 확인(loupe)은 왜 전체 이미지를 안 보여주나
+
+GFX100RF급 해상도를 통째로 Bitmap/이미지 뷰로 띄우면 export와 똑같이 기기 텍스처
+크기 한계에 걸릴 수 있다. 그래서 "100%" 버튼은 전체 이미지를 원본 해상도로
+보정까지 마친 뒤, 화면 중앙 1200x1200px 영역만 잘라서 보여준다(핀치 줌/팬 가능).
+탭해서 보고 싶은 지점을 고르는 기능은 아직 없음 — 항상 중앙 기준.
 
 ### 왜 프리뷰와 export 경로가 다른가
 
@@ -103,8 +115,12 @@ RGB8 버퍼만 ~300MB고, 보급형/구형 기기의 `GL_MAX_TEXTURE_SIZE`(보�
   필요해지면 libjpeg-turbo를 NDK로 추가 빌드해 `NO_JPEG`를 해제하면 됩니다.
 - 크롭은 데이터 모델(`EditState`)과 렌더링(프리뷰 셰이더 UV, export 캔버스 크기)까지는
   구현되어 있지만, 드래그로 크롭 영역을 지정하는 UI는 아직 없습니다(회전 버튼만 제공).
-- 히스토그램, 커브 툴, 배치 처리, 16bit 선형 파이프라인, 필름 시뮬레이션 3D LUT,
-  자동 테스트/CI는 v0.1 범위 밖입니다.
+- 톤커브는 RGB 통합 커브(5점, 구간별 선형보간)만 지원 — R/G/B 개별 채널 커브는 아직 없음.
+- 히스토그램은 프록시(축소) 버퍼 기준으로 계산 — 통계적으로는 충분히 대표성 있지만
+  1px 단위 정밀도는 아님.
+- 필름 시뮬레이션 3D LUT, AI 마스킹(하늘/인물 등 영역별 보정), 데이트 스탬프, 즐겨찾기/필터,
+  저장 경로·포맷 선택, 배치 처리, 16bit 선형 파이프라인, 자동 테스트/CI는 아직 없음 —
+  FilmRawstery 원본에 있는 기능들이라 다음 단계로 논의 중.
 
 ## 참고한 레퍼런스
 
