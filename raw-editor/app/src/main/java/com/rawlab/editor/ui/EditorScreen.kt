@@ -1,26 +1,21 @@
 package com.rawlab.editor.ui
 
-import android.graphics.Bitmap
 import android.opengl.GLSurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -35,28 +30,24 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.rawlab.editor.R
 import com.rawlab.editor.export.ExportFormat
 import com.rawlab.editor.gl.RawGLRenderer
 import com.rawlab.editor.raw.FilmSimLut
-import com.rawlab.editor.raw.ProcessedImage
 import com.rawlab.editor.raw.RawProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+private const val MAX_PREVIEW_ZOOM = 8f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +58,12 @@ fun EditorScreen(viewModel: EditorViewModel) {
 
     val renderer = remember { RawGLRenderer(context) }
     var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
+
+    // 프리뷰 확대/이동 상태 — 원본을 다시 불러오지 않고 이미 화면에 있는 프록시
+    // 텍스처를 화면에서만 확대해서 보여준다(핀치줌/드래그, 더블탭으로 초기화).
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var panX by remember { mutableFloatStateOf(0f) }
+    var panY by remember { mutableFloatStateOf(0f) }
 
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) viewModel.setExportFolder(uri)
@@ -105,9 +102,6 @@ fun EditorScreen(viewModel: EditorViewModel) {
         TopAppBar(
             title = { Text(uiState.sourceDisplayName, maxLines = 1) },
             actions = {
-                TextButton(onClick = { viewModel.openLoupe() }, enabled = !uiState.isLoupeLoading) {
-                    Text(stringResource(R.string.editor_loupe))
-                }
                 TextButton(onClick = {
                     val next = (uiState.editState.rotationDegrees + 90) % 360
                     viewModel.updateEditState(uiState.editState.copy(rotationDegrees = next))
@@ -130,7 +124,31 @@ fun EditorScreen(viewModel: EditorViewModel) {
         AndroidView(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
+                .weight(1f)
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, gestureZoom, _ ->
+                        zoom = (zoom * gestureZoom).coerceIn(1f, MAX_PREVIEW_ZOOM)
+                        // 팬 이동량이 확대 배율과 무관하게 화면 픽셀 이동량과 일치하도록
+                        // NDC 단위로 변환한다(화면 y는 아래로, NDC y는 위로 증가하므로 부호 반전).
+                        panX += pan.x / (size.width / 2f)
+                        panY -= pan.y / (size.height / 2f)
+                        renderer.viewZoom = zoom
+                        renderer.viewPanX = panX
+                        renderer.viewPanY = panY
+                        glView?.requestRender()
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures(onDoubleTap = {
+                        zoom = 1f
+                        panX = 0f
+                        panY = 0f
+                        renderer.viewZoom = 1f
+                        renderer.viewPanX = 0f
+                        renderer.viewPanY = 0f
+                        glView?.requestRender()
+                    })
+                },
             factory = { ctx ->
                 GLSurfaceView(ctx).apply {
                     setEGLContextClientVersion(3)
@@ -262,64 +280,6 @@ fun EditorScreen(viewModel: EditorViewModel) {
             LaunchedEffect(message) {
                 delay(2000)
                 viewModel.consumeExportMessage()
-            }
-        }
-    }
-
-    if (uiState.isLoupeLoading || uiState.loupeImage != null) {
-        LoupeOverlay(
-            image = uiState.loupeImage,
-            isLoading = uiState.isLoupeLoading,
-            onDismiss = { viewModel.closeLoupe() },
-        )
-    }
-}
-
-@Composable
-private fun LoupeOverlay(image: ProcessedImage?, isLoading: Boolean, onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (isLoading || image == null) {
-                CircularProgressIndicator()
-            } else {
-                var scale by remember { mutableFloatStateOf(1f) }
-                var offsetX by remember { mutableFloatStateOf(0f) }
-                var offsetY by remember { mutableFloatStateOf(0f) }
-                val bitmap = remember(image) {
-                    Bitmap.createBitmap(image.argb, image.width, image.height, Bitmap.Config.ARGB_8888)
-                }
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = scale, scaleY = scale,
-                            translationX = offsetX, translationY = offsetY,
-                        )
-                        .pointerInput(image) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(1f, 6f)
-                                offsetX += pan.x
-                                offsetY += pan.y
-                            }
-                        }
-                        .pointerInput(image) {
-                            detectTapGestures(onDoubleTap = {
-                                scale = 1f
-                                offsetX = 0f
-                                offsetY = 0f
-                            })
-                        },
-                )
-            }
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
-                Text(stringResource(R.string.editor_loupe_close), color = Color.White)
             }
         }
     }

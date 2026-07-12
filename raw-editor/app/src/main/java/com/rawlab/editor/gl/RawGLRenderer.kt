@@ -22,6 +22,15 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var editState: EditState = EditState()
 
+    // 화면 확대/이동(핀치줌/드래그). 별도로 원본을 다시 디코드하지 않고 이미 올라간
+    // 프록시 텍스처를 화면에서만 확대해서 보여준다 — 재디코드가 필요 없어 안전하다.
+    @Volatile
+    var viewZoom: Float = 1f
+    @Volatile
+    var viewPanX: Float = 0f
+    @Volatile
+    var viewPanY: Float = 0f
+
     private var program = 0
     private var vbo = 0
     private var textureId = 0
@@ -233,6 +242,11 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val state = editState
         Matrix.setIdentityM(mvpMatrix, 0)
         if (viewportWidth == 0 || viewportHeight == 0) return
+
+        // 핀치줌/드래그를 최종 화면 공간에서 가장 바깥쪽에 적용한다(v' = Pan * Zoom * ...*v)
+        // — 그래야 팬 이동량이 확대 배율과 무관하게 화면 픽셀 이동량과 일치한다.
+        Matrix.translateM(mvpMatrix, 0, viewPanX, viewPanY, 0f)
+        Matrix.scaleM(mvpMatrix, 0, viewZoom, viewZoom, 1f)
 
         val cropWidth = (state.cropRight - state.cropLeft).coerceAtLeast(0.01f) * imageWidth
         val cropHeight = (state.cropBottom - state.cropTop).coerceAtLeast(0.01f) * imageHeight

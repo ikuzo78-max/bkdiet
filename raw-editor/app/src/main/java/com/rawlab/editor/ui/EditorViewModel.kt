@@ -13,10 +13,7 @@ import com.rawlab.editor.export.ExportPrefs
 import com.rawlab.editor.export.Exporter
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
-import com.rawlab.editor.raw.FilmSimLut
-import com.rawlab.editor.raw.ProcessedImage
 import com.rawlab.editor.raw.RawDecoder
-import com.rawlab.editor.raw.RawProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,10 +25,6 @@ import kotlinx.coroutines.withContext
  *  가능하도록 축소 프록시로 디코드한다 — 전체 해상도는 export 시에만 다시 디코드한다. */
 private const val PREVIEW_MAX_DIMENSION = 2048
 
-/** "100% 확인" 패치 한 변 크기(px). 원본 화소를 그대로 보여주되 Bitmap/GL 텍스처 크기
- *  한계에 걸리지 않을 만큼만 잘라서 보여준다. */
-private const val LOUPE_PATCH_SIZE = 1200
-
 data class RawLabUiState(
     val decoded: DecodedRaw? = null,
     val editState: EditState = EditState(),
@@ -41,8 +34,6 @@ data class RawLabUiState(
     val exportMessage: String? = null,
     val sourceUri: Uri? = null,
     val sourceDisplayName: String = "rawlab",
-    val loupeImage: ProcessedImage? = null,
-    val isLoupeLoading: Boolean = false,
     val exportFormat: ExportFormat = ExportFormat.JPEG,
     /** null이면 기본 위치(Pictures/RawLab, MediaStore)에 저장. */
     val exportFolderUri: Uri? = null,
@@ -162,42 +153,5 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         ExportPrefs.setTreeUri(context, uri)
         val name = uri?.let { runCatching { DocumentFile.fromTreeUri(context, it)?.name }.getOrNull() }
         _uiState.update { it.copy(exportFolderUri = uri, exportFolderName = name) }
-    }
-
-    /** 화면 중심(centerX, centerY, 0..1, 크롭+회전 이후 좌표 기준) 주변을 원본 해상도로
-     *  다시 디코드/보정해서 픽셀 단위로 확인할 수 있게 한다. */
-    fun openLoupe(centerX: Float = 0.5f, centerY: Float = 0.5f) {
-        val state = _uiState.value
-        val uri = state.sourceUri ?: return
-        _uiState.update { it.copy(isLoupeLoading = true) }
-        viewModelScope.launch {
-            val context = getApplication<Application>()
-            val patch = withContext(Dispatchers.Default) {
-                runCatching {
-                    val decoded = context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                        RawDecoder.decode(pfd.fd, 0)
-                    } ?: error("전체 해상도 RAW 디코딩 실패")
-                    val filmLut = FilmSimLut.load(context, state.editState.filmSimulation) ?: FloatArray(0)
-                    RawProcessor.process(
-                        decoded.pixels, decoded.width, decoded.height,
-                        state.editState.exposure, state.editState.contrast,
-                        state.editState.temperature, state.editState.tint,
-                        state.editState.highlights, state.editState.shadows,
-                        state.editState.saturation, state.editState.vibrance, state.editState.sharpen,
-                        state.editState.curvePoints.toFloatArray(),
-                        filmLut, FilmSimLut.LUT_SIZE, state.editState.filmSimStrength,
-                        state.editState.cropLeft, state.editState.cropTop,
-                        state.editState.cropRight, state.editState.cropBottom,
-                        state.editState.rotationDegrees,
-                        centerX, centerY, LOUPE_PATCH_SIZE,
-                    )
-                }.getOrNull()
-            }
-            _uiState.update { it.copy(isLoupeLoading = false, loupeImage = patch) }
-        }
-    }
-
-    fun closeLoupe() {
-        _uiState.update { it.copy(loupeImage = null) }
     }
 }
