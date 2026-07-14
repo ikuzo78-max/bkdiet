@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -29,6 +30,13 @@ fun CurveEditor(
     lineColor: Color = Color(0xFFFFC107),
 ) {
     var activeIndex by remember { mutableStateOf<Int?>(null) }
+    // pointerInput(Unit)의 제스처 코루틴은 최초 1회만 시작되고 리컴포지션마다 재시작되지
+    // 않으므로, points/onPointsChange를 직접 참조하면 첫 드래그 이후에는 항상 "처음
+    // 마운트됐을 때의" 값으로 고정되어(stale closure) 이전 드래그로 바뀐 값이 다음
+    // 드래그에서 덮어써져 리셋되는 문제가 있었다. rememberUpdatedState로 항상 최신 값을
+    // 참조하도록 고친다.
+    val currentPoints by rememberUpdatedState(points)
+    val currentOnPointsChange by rememberUpdatedState(onPointsChange)
 
     Canvas(
         modifier = modifier
@@ -45,9 +53,9 @@ fun CurveEditor(
                     change.consume()
                     val index = activeIndex ?: return@detectDragGestures
                     val yNorm = 1f - (change.position.y / size.height).coerceIn(0f, 1f)
-                    val updated = points.toMutableList()
+                    val updated = currentPoints.toMutableList()
                     updated[index] = yNorm.coerceIn(0f, 1f)
-                    onPointsChange(updated)
+                    currentOnPointsChange(updated)
                 }
             }
     ) {
