@@ -23,12 +23,21 @@ data class EditState(
     val cropRight: Float = 1f,
     val cropBottom: Float = 1f,
     /**
-     * 톤커브 조절점의 출력값(y, 0..1). x는 항상 0, 0.25, 0.5, 0.75, 1.0 고정.
-     * 기본값(0,0.25,0.5,0.75,1.0)은 대각선(무보정)을 의미한다.
+     * 톤커브 조절점의 출력값(y, 0..1) 4세트 — 마스터(RGB 통합) + 채널별(R/G/B).
+     * x는 항상 0, 0.25, 0.5, 0.75, 1.0 고정. 기본값(0,0.25,0.5,0.75,1.0)은 대각선(무보정).
+     * 최종 커브는 채널별(masterCurve(x))로, 마스터가 먼저 적용되고 그 결과에 채널별
+     * 커브가 적용된다(라이트룸 포인트 커브와 동일한 합성 순서).
      */
-    val curvePoints: List<Float> = listOf(0f, 0.25f, 0.5f, 0.75f, 1f),
+    val curveMaster: List<Float> = listOf(0f, 0.25f, 0.5f, 0.75f, 1f),
+    val curveRed: List<Float> = listOf(0f, 0.25f, 0.5f, 0.75f, 1f),
+    val curveGreen: List<Float> = listOf(0f, 0.25f, 0.5f, 0.75f, 1f),
+    val curveBlue: List<Float> = listOf(0f, 0.25f, 0.5f, 0.75f, 1f),
     /** FilmSimLut.NAMES 중 하나, "none"이면 미적용. */
     val filmSimulation: String = FilmSimLut.NONE,
     /** 필름 시뮬레이션 강도 0..1 (필름 미선택 시 무시됨). */
     val filmSimStrength: Float = 1f,
-)
+) {
+    /** RawProcessor.process/computeHistogram의 curvePoints 인자 형식(마스터+R+G+B, 20개 float). */
+    fun toCurveArray(): FloatArray =
+        (curveMaster + curveRed + curveGreen + curveBlue).toFloatArray()
+}

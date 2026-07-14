@@ -26,31 +26,42 @@ inline float luminance(float r, float g, float b) {
     return 0.2126f * r + 0.7152f * g + 0.0722f * b;
 }
 
-// CurveLut.kt와 동일한 구간별 선형보간. x는 항상 0/0.25/0.5/0.75/1 고정.
-struct CurveLut256 {
-    float values[256];
+// CurveLut.kt의 evaluate()와 동일한 구간별 선형보간. x는 항상 0/0.25/0.5/0.75/1 고정.
+inline float evalCurve5(const float points[5], float x) {
+    const float xs[5] = {0.f, 0.25f, 0.5f, 0.75f, 1.f};
+    int seg = 3;
+    for (int s = 0; s < 4; ++s) {
+        if (x <= xs[s + 1]) {
+            seg = s;
+            break;
+        }
+    }
+    float x0 = xs[seg], x1 = xs[seg + 1];
+    float y0 = points[seg], y1 = points[seg + 1];
+    float t = (x1 > x0) ? (x - x0) / (x1 - x0) : 0.f;
+    return y0 + (y1 - y0) * t;
+}
 
-    explicit CurveLut256(const float points[5]) {
-        const float xs[5] = {0.f, 0.25f, 0.5f, 0.75f, 1.f};
+// CurveLut.kt의 buildCombined256()과 동일: 마스터 커브를 먼저 적용한 뒤 채널별 커브를
+// 적용한 결과를 256단계로 미리 계산해둔다.
+struct ChannelCurveLut256 {
+    float red[256], green[256], blue[256];
+
+    ChannelCurveLut256(const float master[5], const float redPts[5],
+                        const float greenPts[5], const float bluePts[5]) {
         for (int i = 0; i < 256; ++i) {
             float x = i / 255.f;
-            int seg = 3;
-            for (int s = 0; s < 4; ++s) {
-                if (x <= xs[s + 1]) {
-                    seg = s;
-                    break;
-                }
-            }
-            float x0 = xs[seg], x1 = xs[seg + 1];
-            float y0 = points[seg], y1 = points[seg + 1];
-            float t = (x1 > x0) ? (x - x0) / (x1 - x0) : 0.f;
-            values[i] = y0 + (y1 - y0) * t;
+            float m = evalCurve5(master, x);
+            red[i] = evalCurve5(redPts, m);
+            green[i] = evalCurve5(greenPts, m);
+            blue[i] = evalCurve5(bluePts, m);
         }
     }
 
-    inline float apply(float v) const {
-        int idx = static_cast<int>(clamp01(v) * 255.f + 0.5f);
-        return values[idx];
+    inline void apply(float &r, float &g, float &b) const {
+        r = red[static_cast<int>(clamp01(r) * 255.f + 0.5f)];
+        g = green[static_cast<int>(clamp01(g) * 255.f + 0.5f)];
+        b = blue[static_cast<int>(clamp01(b) * 255.f + 0.5f)];
     }
 };
 
@@ -58,7 +69,7 @@ struct CurveLut256 {
 void adjustPixel(float &r, float &g, float &b,
                   float tempShift, float tintShift, float evScale,
                   float highlights, float shadows, float contrast,
-                  float saturation, float vibrance, const CurveLut256 &curve) {
+                  float saturation, float vibrance, const ChannelCurveLut256 &curve) {
     // 1) 화이트 밸런스
     r *= (1.f + tempShift);
     b *= (1.f - tempShift);
@@ -105,17 +116,26 @@ void adjustPixel(float &r, float &g, float &b,
     g = g + (vg - g) * (1.f - existingSat);
     b = b + (vb - b) * (1.f - existingSat);
 
-    // 6) 톤커브
-    r = curve.apply(r);
-    g = curve.apply(g);
-    b = curve.apply(b);
+    // 6) 톤커브 (마스터 -> 채널별)
+    curve.apply(r, g, b);
 }
 
-void readCurvePoints(JNIEnv *env, jfloatArray curvePointsIn, float out[5]) {
+// curvePointsIn은 마스터+빨강+초록+파랑 4세트(5점씩)를 이어붙인 20개 float.
+void readCurvePoints(JNIEnv *env, jfloatArray curvePointsIn,
+                      float master[5], float red[5], float green[5], float blue[5]) {
+    jfloat buf[20];
+    float defaults[5] = {0.f, 0.25f, 0.5f, 0.75f, 1.f};
+    for (int set = 0; set < 4; ++set) {
+        for (int i = 0; i < 5; ++i) buf[set * 5 + i] = defaults[i];
+    }
     jsize n = env->GetArrayLength(curvePointsIn);
-    jfloat buf[5] = {0.f, 0.25f, 0.5f, 0.75f, 1.f};
-    env->GetFloatArrayRegion(curvePointsIn, 0, std::min(n, static_cast<jsize>(5)), buf);
-    for (int i = 0; i < 5; ++i) out[i] = buf[i];
+    env->GetFloatArrayRegion(curvePointsIn, 0, std::min(n, static_cast<jsize>(20)), buf);
+    for (int i = 0; i < 5; ++i) {
+        master[i] = buf[i];
+        red[i] = buf[5 + i];
+        green[i] = buf[10 + i];
+        blue[i] = buf[15 + i];
+    }
 }
 
 // (rot==90/270일 때 cropW/cropH가 필요하므로 인자로 받는다) 회전 후(output) 좌표를
@@ -250,9 +270,9 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     std::vector<uint8_t> src(static_cast<size_t>(len));
     env->GetByteArrayRegion(pixelsIn, 0, len, reinterpret_cast<jbyte *>(src.data()));
 
-    float curvePts[5];
-    readCurvePoints(env, curvePointsIn, curvePts);
-    CurveLut256 curve(curvePts);
+    float curveMaster[5], curveRed[5], curveGreen[5], curveBlue[5];
+    readCurvePoints(env, curvePointsIn, curveMaster, curveRed, curveGreen, curveBlue);
+    ChannelCurveLut256 curve(curveMaster, curveRed, curveGreen, curveBlue);
 
     jsize filmLutLen = env->GetArrayLength(filmLutIn);
     std::vector<float> filmLut(static_cast<size_t>(filmLutLen));
@@ -413,9 +433,9 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
     std::vector<uint8_t> src(static_cast<size_t>(len));
     env->GetByteArrayRegion(pixelsIn, 0, len, reinterpret_cast<jbyte *>(src.data()));
 
-    float curvePts[5];
-    readCurvePoints(env, curvePointsIn, curvePts);
-    CurveLut256 curve(curvePts);
+    float curveMaster[5], curveRed[5], curveGreen[5], curveBlue[5];
+    readCurvePoints(env, curvePointsIn, curveMaster, curveRed, curveGreen, curveBlue);
+    ChannelCurveLut256 curve(curveMaster, curveRed, curveGreen, curveBlue);
 
     jsize filmLutLen = env->GetArrayLength(filmLutIn);
     std::vector<float> filmLut(static_cast<size_t>(filmLutLen));

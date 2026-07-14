@@ -30,6 +30,7 @@ object RawProcessor {
         saturation: Float,
         vibrance: Float,
         sharpen: Float,
+        /** 마스터+R+G+B 4개 커브(각 5점)를 이어붙인 20개 float. EditState.toCurveArray() 참고. */
         curvePoints: FloatArray,
         /** FilmSimLut.load() 결과 (size*size*size*3, RGB 0..1). 없으면 빈 배열. */
         filmLut: FloatArray,
@@ -58,6 +59,7 @@ object RawProcessor {
         shadows: Float,
         saturation: Float,
         vibrance: Float,
+        /** 마스터+R+G+B 4개 커브(각 5점)를 이어붙인 20개 float. EditState.toCurveArray() 참고. */
         curvePoints: FloatArray,
         filmLut: FloatArray,
         filmLutSize: Int,

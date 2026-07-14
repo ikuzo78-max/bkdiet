@@ -35,7 +35,7 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var vbo = 0
     private var textureId = 0
     private var curveLutTextureId = 0
-    private var lastCurvePoints: List<Float>? = null
+    private var lastCurveKey: List<List<Float>>? = null
     private var filmLutTextureId = 0
     private var lastFilmSimulation: String? = null
     private var imageWidth = 0
@@ -166,10 +166,11 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     private fun updateCurveLutIfNeeded() {
-        val points = editState.curvePoints
-        if (points == lastCurvePoints) return
-        lastCurvePoints = points
-        val lut = CurveLut.build256(points)
+        val state = editState
+        val key = listOf(state.curveMaster, state.curveRed, state.curveGreen, state.curveBlue)
+        if (key == lastCurveKey) return
+        lastCurveKey = key
+        val lut = CurveLut.buildCombined256(state.curveMaster, state.curveRed, state.curveGreen, state.curveBlue)
         // 반드시 유닛1을 활성화한 뒤 바인드해야 한다 — 이 시점에 유닛0이 활성 상태이면
         // glBindTexture가 유닛0의 GL_TEXTURE_2D 바인딩(사진 텍스처)을 덮어써서
         // 화면에 사진 대신 이 LUT 텍스처가 그려지는 버그가 생긴다.
@@ -177,9 +178,9 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, curveLutTextureId)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
         GLES30.glTexImage2D(
-            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_R8,
+            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGB,
             256, 1, 0,
-            GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, ByteBuffer.wrap(lut)
+            GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE, ByteBuffer.wrap(lut)
         )
     }
 

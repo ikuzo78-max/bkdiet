@@ -17,7 +17,8 @@ uniform float uShadows;
 uniform float uSaturation;
 uniform float uVibrance;
 uniform float uSharpen;
-uniform sampler2D uCurveLut; // 256x1 LUT, R 채널만 사용
+uniform sampler2D uCurveLut; // 256x1 RGB LUT: R=red채널결과, G=green채널결과, B=blue채널결과
+                              // (마스터 커브 -> 채널별 커브 순으로 이미 합성되어 있음)
 uniform mediump sampler3D uFilmLut; // 32x32x32 필름 시뮬레이션 3D LUT
 uniform float uFilmLutStrength;     // 0 = 미적용
 
@@ -66,10 +67,10 @@ void main() {
     float existingSat = maxC - minC;
     color = mix(color, mix(vec3(gray), color, 1.0 + uVibrance), 1.0 - existingSat);
 
-    // 6) 톤커브 (구간별 선형보간 LUT, RGB 동일 커브)
+    // 6) 톤커브 (마스터 -> 채널별, 각 채널을 자기 값으로 조회)
     color.r = texture(uCurveLut, vec2(color.r, 0.5)).r;
-    color.g = texture(uCurveLut, vec2(color.g, 0.5)).r;
-    color.b = texture(uCurveLut, vec2(color.b, 0.5)).r;
+    color.g = texture(uCurveLut, vec2(color.g, 0.5)).g;
+    color.b = texture(uCurveLut, vec2(color.b, 0.5)).b;
 
     // 7) 샤픈: 인접 4픽셀 평균 대비 언샵 마스크
     if (uSharpen > 0.0) {

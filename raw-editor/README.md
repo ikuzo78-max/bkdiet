@@ -62,14 +62,14 @@ app/src/main/
     raw/RawProcessor.kt   # JNI 전체해상도 보정/히스토그램 래퍼
     raw/ProcessedImage.kt # 보정 결과 (width, height, ARGB8888 pixels)
     raw/EditState.kt      # 비파괴 편집 파라미터 (톤커브/필름시뮬레이션 포함)
-    raw/CurveLut.kt       # 톤커브 5점 -> 256단계 LUT (구간별 선형보간, GL 텍스처용)
+    raw/CurveLut.kt       # 톤커브 5점 -> 256단계 LUT (마스터+R/G/B 채널별, 구간별 선형보간, GL 텍스처용)
     raw/FilmSimLut.kt     # .cube 파싱(+캐시), 필름 시뮬레이션 3D LUT
     gl/RawGLRenderer.kt   # GLSurfaceView.Renderer, 실시간 프리뷰(프록시 해상도)
     gl/ShaderUtils.kt     # 셰이더 컴파일/링크 공용 헬퍼
     ui/HomeScreen.kt       # SAF로 RAW 파일 선택
     ui/EditorScreen.kt     # 프리뷰(핀치줌/드래그) + 슬라이더 + 필름시뮬레이션 + 톤커브 +
                            # 히스토그램 + 회전/저장설정/export
-    ui/CurveEditor.kt      # 5점 드래그 톤커브 에디터 (Canvas)
+    ui/CurveEditor.kt      # 5점 드래그 톤커브 에디터 (Canvas, 채널별 색상 표시)
     ui/HistogramView.kt    # RGB 히스토그램 오버레이 (Canvas)
     ui/EditorViewModel.kt  # 원본 Uri 보관, 프리뷰/export 트리거
     export/Exporter.kt     # 원본 Uri 재디코드(전체 해상도) -> RawProcessor -> 지정 포맷/폴더로 저장
@@ -127,7 +127,8 @@ RGB8 버퍼만 ~300MB고, 보급형/구형 기기의 `GL_MAX_TEXTURE_SIZE`(보�
   필요해지면 libjpeg-turbo를 NDK로 추가 빌드해 `NO_JPEG`를 해제하면 됩니다.
 - 크롭은 데이터 모델(`EditState`)과 렌더링(프리뷰 셰이더 UV, export 캔버스 크기)까지는
   구현되어 있지만, 드래그로 크롭 영역을 지정하는 UI는 아직 없습니다(회전 버튼만 제공).
-- 톤커브는 RGB 통합 커브(5점, 구간별 선형보간)만 지원 — R/G/B 개별 채널 커브는 아직 없음.
+- 톤커브는 마스터(RGB 통합) + R/G/B 개별 채널까지 4세트(각 5점, 구간별 선형보간) 지원.
+  합성 순서는 마스터 커브 결과값에 채널별 커브를 적용하는 방식(라이트룸 포인트 커브와 동일).
 - 히스토그램은 프록시(축소) 버퍼 기준으로 계산 — 통계적으로는 충분히 대표성 있지만
   1px 단위 정밀도는 아님.
 - 필름 시뮬레이션은 11종(Provia/Velvia/Astia/Classic Chrome/Classic Neg/Nostalgic Neg/

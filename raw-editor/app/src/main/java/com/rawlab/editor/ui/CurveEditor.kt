@@ -22,7 +22,12 @@ import kotlin.math.roundToInt
  * [points]는 y값(0..1) 5개, 대각선(0,0.25,0.5,0.75,1)이 무보정 상태.
  */
 @Composable
-fun CurveEditor(points: List<Float>, onPointsChange: (List<Float>) -> Unit, modifier: Modifier = Modifier) {
+fun CurveEditor(
+    points: List<Float>,
+    onPointsChange: (List<Float>) -> Unit,
+    modifier: Modifier = Modifier,
+    lineColor: Color = Color(0xFFFFC107),
+) {
     var activeIndex by remember { mutableStateOf<Int?>(null) }
 
     Canvas(
@@ -66,7 +71,7 @@ fun CurveEditor(points: List<Float>, onPointsChange: (List<Float>) -> Unit, modi
         }
         drawPath(
             curvePath,
-            color = Color(0xFFFFC107),
+            color = lineColor,
             style = Stroke(width = 5f, cap = StrokeCap.Round),
         )
 
@@ -74,7 +79,7 @@ fun CurveEditor(points: List<Float>, onPointsChange: (List<Float>) -> Unit, modi
         points.forEachIndexed { i, y ->
             val x = w * (i / 4f)
             val py = h * (1f - y)
-            drawCircle(color = Color(0xFFFFC107), radius = 12f, center = Offset(x, py))
+            drawCircle(color = lineColor, radius = 12f, center = Offset(x, py))
             drawCircle(color = Color.Black, radius = 5f, center = Offset(x, py))
         }
     }

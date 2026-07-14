@@ -49,6 +49,13 @@ import kotlinx.coroutines.withContext
 
 private const val MAX_PREVIEW_ZOOM = 8f
 
+private enum class CurveChannel(val label: String, val color: Color) {
+    MASTER("RGB", Color(0xFFFFC107)),
+    RED("R", Color(0xFFFF5252)),
+    GREEN("G", Color(0xFF4CAF50)),
+    BLUE("B", Color(0xFF448AFF)),
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(viewModel: EditorViewModel) {
@@ -79,6 +86,8 @@ fun EditorScreen(viewModel: EditorViewModel) {
     }
 
     // 히스토그램은 슬라이더를 움직일 때마다 다시 계산하면 버벅이므로 살짝 디바운스한다.
+    var curveChannel by remember { mutableStateOf(CurveChannel.MASTER) }
+
     var histogramBins by remember { mutableStateOf<IntArray?>(null) }
     LaunchedEffect(decoded, uiState.editState) {
         delay(150)
@@ -90,7 +99,7 @@ fun EditorScreen(viewModel: EditorViewModel) {
                     decoded.pixels, decoded.width, decoded.height,
                     state.exposure, state.contrast, state.temperature, state.tint,
                     state.highlights, state.shadows, state.saturation, state.vibrance,
-                    state.curvePoints.toFloatArray(),
+                    state.toCurveArray(),
                     filmLut, FilmSimLut.LUT_SIZE, state.filmSimStrength,
                     state.cropLeft, state.cropTop, state.cropRight, state.cropBottom,
                 )
@@ -229,9 +238,36 @@ fun EditorScreen(viewModel: EditorViewModel) {
             }
 
             Text(stringResource(R.string.editor_curve), style = MaterialTheme.typography.labelMedium)
+            Row {
+                CurveChannel.entries.forEach { channel ->
+                    val selected = curveChannel == channel
+                    TextButton(onClick = { curveChannel = channel }) {
+                        Text(
+                            text = channel.label,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (selected) channel.color else Color.Unspecified,
+                        )
+                    }
+                }
+            }
+            val currentCurvePoints = when (curveChannel) {
+                CurveChannel.MASTER -> uiState.editState.curveMaster
+                CurveChannel.RED -> uiState.editState.curveRed
+                CurveChannel.GREEN -> uiState.editState.curveGreen
+                CurveChannel.BLUE -> uiState.editState.curveBlue
+            }
             CurveEditor(
-                points = uiState.editState.curvePoints,
-                onPointsChange = { viewModel.updateEditState(uiState.editState.copy(curvePoints = it)) },
+                points = currentCurvePoints,
+                onPointsChange = { newPoints ->
+                    val next = when (curveChannel) {
+                        CurveChannel.MASTER -> uiState.editState.copy(curveMaster = newPoints)
+                        CurveChannel.RED -> uiState.editState.copy(curveRed = newPoints)
+                        CurveChannel.GREEN -> uiState.editState.copy(curveGreen = newPoints)
+                        CurveChannel.BLUE -> uiState.editState.copy(curveBlue = newPoints)
+                    }
+                    viewModel.updateEditState(next)
+                },
+                lineColor = curveChannel.color,
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1.6f)
