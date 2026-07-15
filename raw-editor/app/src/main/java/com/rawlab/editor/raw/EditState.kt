@@ -17,6 +17,8 @@ data class EditState(
     val saturation: Float = 0f,
     val vibrance: Float = 0f,
     val sharpen: Float = 0f,
+    /** 텍스처/클래리티 — 샤픈과 같은 언샵마스크 방식이지만 훨씬 넓은 반경의 블러를 기준으로 삼는다. */
+    val clarity: Float = 0f,
     val rotationDegrees: Int = 0,
     val cropLeft: Float = 0f,
     val cropTop: Float = 0f,

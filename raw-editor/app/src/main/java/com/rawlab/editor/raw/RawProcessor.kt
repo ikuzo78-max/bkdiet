@@ -30,6 +30,8 @@ object RawProcessor {
         saturation: Float,
         vibrance: Float,
         sharpen: Float,
+        /** 텍스처/클래리티 — 넓은 반경 블러 기준 언샵마스크. EditState.clarity 참고. */
+        clarity: Float,
         /** 마스터+R+G+B 4개 커브(각 5점)를 이어붙인 20개 float. EditState.toCurveArray() 참고. */
         curvePoints: FloatArray,
         /** FilmSimLut.load() 결과 (size*size*size*3, RGB 0..1). 없으면 빈 배열. */

@@ -251,6 +251,62 @@ void applyFilmLut(float &r, float &g, float &b, const float *lut, int size, floa
     b = b + (outCh[2] - b) * strength;
 }
 
+// buf(bufW x bufH, RGB 인접)에서 (fx, fy) 위치를 바일리니어로 샘플링한다.
+void sampleBilinear(const std::vector<float> &buf, int bufW, int bufH,
+                     float fx, float fy, float &r, float &g, float &b) {
+    fx = std::max(0.f, std::min(fx, bufW - 1.f));
+    fy = std::max(0.f, std::min(fy, bufH - 1.f));
+    int x0 = static_cast<int>(fx), y0 = static_cast<int>(fy);
+    int x1 = std::min(x0 + 1, bufW - 1);
+    int y1 = std::min(y0 + 1, bufH - 1);
+    float tx = fx - x0, ty = fy - y0;
+    auto at = [&](int xx, int yy, int ch) {
+        return buf[(static_cast<size_t>(yy) * bufW + xx) * 3 + ch];
+    };
+    float outCh[3];
+    for (int ch = 0; ch < 3; ++ch) {
+        float top = at(x0, y0, ch) + (at(x1, y0, ch) - at(x0, y0, ch)) * tx;
+        float bot = at(x0, y1, ch) + (at(x1, y1, ch) - at(x0, y1, ch)) * tx;
+        outCh[ch] = top + (bot - top) * ty;
+    }
+    r = outCh[0];
+    g = outCh[1];
+    b = outCh[2];
+}
+
+// 텍스처/클래리티(넓은 반경 언샵마스크)에 쓸 블러 버퍼를 만든다. 102MP 원본에 큰
+// 커널을 픽셀마다 직접 적용하면 시간이 지나치게 오래 걸리므로, 먼저 원본을 1/16
+// 크기로 박스다운샘플한 작은 버퍼를 만들고(GPU 프리뷰의 밉맵 레벨4 샘플링과 동일한
+// 발상) 본 픽셀 루프에서는 이를 바일리니어로 조회만 한다.
+void buildClarityBlur(const std::vector<uint8_t> &src, int width,
+                       int regionOrigX, int regionOrigY, int regionW, int regionH,
+                       std::vector<float> &blurBuf, int &blurW, int &blurH) {
+    blurW = std::max(1, regionW / 16);
+    blurH = std::max(1, regionH / 16);
+    blurBuf.assign(static_cast<size_t>(blurW) * blurH * 3, 0.f);
+    std::vector<int> count(static_cast<size_t>(blurW) * blurH, 0);
+    for (int ry = 0; ry < regionH; ++ry) {
+        int y = regionOrigY + ry;
+        int by = std::min(ry * blurH / regionH, blurH - 1);
+        for (int rx = 0; rx < regionW; ++rx) {
+            int x = regionOrigX + rx;
+            int bx = std::min(rx * blurW / regionW, blurW - 1);
+            size_t idx = (static_cast<size_t>(y) * width + x) * 3;
+            size_t bidx = (static_cast<size_t>(by) * blurW + bx) * 3;
+            blurBuf[bidx] += src[idx] / 255.f;
+            blurBuf[bidx + 1] += src[idx + 1] / 255.f;
+            blurBuf[bidx + 2] += src[idx + 2] / 255.f;
+            count[static_cast<size_t>(by) * blurW + bx] += 1;
+        }
+    }
+    for (size_t i = 0; i < count.size(); ++i) {
+        int c = std::max(1, count[i]);
+        blurBuf[i * 3] /= c;
+        blurBuf[i * 3 + 1] /= c;
+        blurBuf[i * 3 + 2] /= c;
+    }
+}
+
 } // namespace
 
 extern "C"
@@ -260,6 +316,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     jbyteArray pixelsIn, jint width, jint height,
     jfloat exposure, jfloat contrast, jfloat temperature, jfloat tint,
     jfloat highlights, jfloat shadows, jfloat saturation, jfloat vibrance, jfloat sharpen,
+    jfloat clarity,
     jfloatArray curvePointsIn,
     jfloatArray filmLutIn, jint filmLutSize, jfloat filmLutStrength,
     jfloat cropLeft, jfloat cropTop, jfloat cropRight, jfloat cropBottom,
@@ -346,10 +403,17 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     int regionOrigX = cropLeftPx + regionInCropX;
     int regionOrigY = cropTopPx + regionInCropY;
 
-    // 1~8단계(화이트밸런스~톤커브~샤픈~필름시뮬레이션)를 필요한 영역에 대해서만
-    // 한 번의 패스로 계산한다. 샤픈의 이웃 픽셀은 항상 원본 전체(src, width/height)
-    // 기준으로 클램프해서 읽으므로 영역 경계에서도 전체 이미지를 처리했을 때와
-    // 동일한 결과가 나온다.
+    std::vector<float> clarityBlur;
+    int clarityBlurW = 0, clarityBlurH = 0;
+    if (clarity != 0.f) {
+        buildClarityBlur(src, width, regionOrigX, regionOrigY, regionW, regionH,
+                          clarityBlur, clarityBlurW, clarityBlurH);
+    }
+
+    // 1~8단계(화이트밸런스~톤커브~텍스처/클래리티~샤픈~필름시뮬레이션)를 필요한 영역에
+    // 대해서만 한 번의 패스로 계산한다. 샤픈의 이웃 픽셀은 항상 원본 전체(src,
+    // width/height) 기준으로 클램프해서 읽으므로 영역 경계에서도 전체 이미지를
+    // 처리했을 때와 동일한 결과가 나온다.
     std::vector<uint8_t> regionOut(static_cast<size_t>(regionW) * regionH * 3);
     for (int ry = 0; ry < regionH; ++ry) {
         int y = regionOrigY + ry;
@@ -361,6 +425,16 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
             float b = src[idx + 2] / 255.f;
             adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
                         contrast, saturation, vibrance, curve);
+
+            if (clarity != 0.f) {
+                float fx = (regionW > 1) ? static_cast<float>(rx) / (regionW - 1) * (clarityBlurW - 1) : 0.f;
+                float fy = (regionH > 1) ? static_cast<float>(ry) / (regionH - 1) * (clarityBlurH - 1) : 0.f;
+                float br, bg, bb;
+                sampleBilinear(clarityBlur, clarityBlurW, clarityBlurH, fx, fy, br, bg, bb);
+                r += (r - br) * clarity * 0.6f;
+                g += (g - bg) * clarity * 0.6f;
+                b += (b - bb) * clarity * 0.6f;
+            }
 
             if (sharpen > 0.f) {
                 int xm = std::max(x - 1, 0);

@@ -74,7 +74,10 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glGenTextures(1, texArr, 0)
         textureId = texArr[0]
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        // MIN_FILTER를 밉맵으로 설정해둔다 — 텍스처/클래리티가 밉맵의 넓은 반경 블러
+        // 레벨을 셰이더에서 textureLod로 샘플링하기 때문(uploadPendingImageIfAny에서
+        // glGenerateMipmap으로 실제 밉체인을 만든다).
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR_MIPMAP_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
@@ -157,6 +160,7 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         setFloat("uSaturation", state.saturation)
         setFloat("uVibrance", state.vibrance)
         setFloat("uSharpen", state.sharpen)
+        setFloat("uClarity", state.clarity)
 
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
@@ -221,6 +225,7 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         )
         imageWidth = image.width
         imageHeight = image.height
+        GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D)
     }
 
     private fun updateVertexData() {

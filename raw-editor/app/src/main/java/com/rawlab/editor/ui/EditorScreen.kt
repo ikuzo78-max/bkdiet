@@ -305,6 +305,9 @@ fun EditorScreen(viewModel: EditorViewModel) {
             ) {
                 viewModel.updateEditState(uiState.editState.copy(sharpen = it))
             }
+            AdjustSlider(stringResource(R.string.editor_clarity), uiState.editState.clarity) {
+                viewModel.updateEditState(uiState.editState.copy(clarity = it))
+            }
         }
 
         uiState.exportMessage?.let { message ->

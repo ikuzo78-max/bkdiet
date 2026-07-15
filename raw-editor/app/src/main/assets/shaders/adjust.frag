@@ -17,6 +17,7 @@ uniform float uShadows;
 uniform float uSaturation;
 uniform float uVibrance;
 uniform float uSharpen;
+uniform float uClarity;
 uniform sampler2D uCurveLut; // 256x1 RGB LUT: R=red채널결과, G=green채널결과, B=blue채널결과
                               // (마스터 커브 -> 채널별 커브 순으로 이미 합성되어 있음)
 uniform mediump sampler3D uFilmLut; // 32x32x32 필름 시뮬레이션 3D LUT
@@ -71,6 +72,15 @@ void main() {
     color.r = texture(uCurveLut, vec2(color.r, 0.5)).r;
     color.g = texture(uCurveLut, vec2(color.g, 0.5)).g;
     color.b = texture(uCurveLut, vec2(color.b, 0.5)).b;
+
+    // 6.5) 텍스처/클래리티: 샤픈과 같은 언샵마스크 방식이지만, 인접 픽셀 대신 밉맵의
+    // 넓은 반경(레벨 4 = 원본 텍스처의 1/16 크기로 뭉친) 블러를 기준으로 삼는다.
+    // 매 프래그먼트마다 큰 커널을 직접 순회하지 않고 밉맵 한 번 샘플링으로 대체해
+    // 실시간 프리뷰 성능을 유지한다.
+    if (uClarity != 0.0) {
+        vec3 wideBlur = textureLod(uTexture, vUv, 4.0).rgb;
+        color += (color - wideBlur) * uClarity * 0.6;
+    }
 
     // 7) 샤픈: 인접 4픽셀 평균 대비 언샵 마스크
     if (uSharpen > 0.0) {

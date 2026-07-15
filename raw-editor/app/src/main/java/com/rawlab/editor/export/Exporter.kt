@@ -45,7 +45,7 @@ object Exporter {
             decoded.pixels, decoded.width, decoded.height,
             editState.exposure, editState.contrast, editState.temperature, editState.tint,
             editState.highlights, editState.shadows, editState.saturation, editState.vibrance,
-            editState.sharpen,
+            editState.sharpen, editState.clarity,
             editState.toCurveArray(),
             filmLut, FilmSimLut.LUT_SIZE, editState.filmSimStrength,
             editState.cropLeft, editState.cropTop, editState.cropRight, editState.cropBottom,
