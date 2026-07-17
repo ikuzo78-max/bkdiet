@@ -8,6 +8,7 @@ import com.rawlab.editor.raw.CurveLut
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
 import com.rawlab.editor.raw.FilmSimLut
+import com.rawlab.editor.raw.LocalMaskType
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
@@ -161,12 +162,47 @@ class RawGLRenderer(private val context: Context) : GLSurfaceView.Renderer {
         setFloat("uVibrance", state.vibrance)
         setFloat("uSharpen", state.sharpen)
         setFloat("uClarity", state.clarity)
+        setLocalAdjustments(state)
 
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
     private fun setFloat(name: String, value: Float) {
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program, name), value)
+    }
+
+    private fun setLocalAdjustments(state: EditState) {
+        val layers = state.localAdjustments.take(EditState.MAX_LOCAL_ADJUSTMENTS)
+        val n = EditState.MAX_LOCAL_ADJUSTMENTS
+        val type = IntArray(n)
+        val start = FloatArray(n * 2)
+        val end = FloatArray(n * 2)
+        val invert = FloatArray(n)
+        val feather = FloatArray(n)
+        val exposure = FloatArray(n)
+        val contrast = FloatArray(n)
+        val saturation = FloatArray(n)
+        layers.forEachIndexed { i, la ->
+            type[i] = if (la.type == LocalMaskType.RADIAL) 1 else 0
+            start[i * 2] = la.startX
+            start[i * 2 + 1] = la.startY
+            end[i * 2] = la.endX
+            end[i * 2 + 1] = la.endY
+            invert[i] = if (la.invert) 1f else 0f
+            feather[i] = la.feather.coerceIn(0.01f, 0.99f)
+            exposure[i] = la.exposure
+            contrast[i] = la.contrast
+            saturation[i] = la.saturation
+        }
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uLocalCount"), layers.size)
+        GLES30.glUniform1iv(GLES30.glGetUniformLocation(program, "uLocalType"), n, type, 0)
+        GLES30.glUniform2fv(GLES30.glGetUniformLocation(program, "uLocalStart"), n, start, 0)
+        GLES30.glUniform2fv(GLES30.glGetUniformLocation(program, "uLocalEnd"), n, end, 0)
+        GLES30.glUniform1fv(GLES30.glGetUniformLocation(program, "uLocalInvert"), n, invert, 0)
+        GLES30.glUniform1fv(GLES30.glGetUniformLocation(program, "uLocalFeather"), n, feather, 0)
+        GLES30.glUniform1fv(GLES30.glGetUniformLocation(program, "uLocalExposure"), n, exposure, 0)
+        GLES30.glUniform1fv(GLES30.glGetUniformLocation(program, "uLocalContrast"), n, contrast, 0)
+        GLES30.glUniform1fv(GLES30.glGetUniformLocation(program, "uLocalSaturation"), n, saturation, 0)
     }
 
     private fun updateCurveLutIfNeeded() {

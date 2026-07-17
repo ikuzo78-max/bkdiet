@@ -23,6 +23,18 @@ uniform sampler2D uCurveLut; // 256x1 RGB LUT: R=red채널결과, G=green채널�
 uniform mediump sampler3D uFilmLut; // 32x32x32 필름 시뮬레이션 3D LUT
 uniform float uFilmLutStrength;     // 0 = 미적용
 
+// 부분 보정(그라디언트/방사형 마스크) — 최대 4레이어. 좌표는 크롭 영역 기준 0..1(vUv와 동일).
+#define MAX_LOCAL 4
+uniform int uLocalCount;
+uniform int uLocalType[MAX_LOCAL];      // 0=그라디언트, 1=방사형
+uniform vec2 uLocalStart[MAX_LOCAL];    // 그라디언트: 효과 0% 지점 / 방사형: 중심
+uniform vec2 uLocalEnd[MAX_LOCAL];      // 그라디언트: 효과 100% 지점 / 방사형: 반경(x,y)
+uniform float uLocalInvert[MAX_LOCAL];  // 0/1
+uniform float uLocalFeather[MAX_LOCAL]; // 방사형 경계 부드러움(그라디언트는 미사용)
+uniform float uLocalExposure[MAX_LOCAL];
+uniform float uLocalContrast[MAX_LOCAL];
+uniform float uLocalSaturation[MAX_LOCAL];
+
 vec3 srgbToLinear(vec3 c) {
     return pow(max(c, 0.0), vec3(2.2));
 }
@@ -33,6 +45,24 @@ vec3 linearToSrgb(vec3 c) {
 
 float luminance(vec3 c) {
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// i번째 부분 보정 레이어의 마스크 값(0=미적용, 1=완전 적용)을 uv 위치에서 계산한다.
+float localMask(int i, vec2 uv) {
+    float mask;
+    if (uLocalType[i] == 1) {
+        vec2 radius = max(uLocalEnd[i], vec2(0.001));
+        vec2 d = (uv - uLocalStart[i]) / radius;
+        float dist = length(d);
+        mask = 1.0 - smoothstep(1.0 - uLocalFeather[i], 1.0, dist);
+    } else {
+        vec2 dir = uLocalEnd[i] - uLocalStart[i];
+        float lenSq = dot(dir, dir);
+        float t = lenSq > 0.0001 ? dot(uv - uLocalStart[i], dir) / lenSq : 0.0;
+        mask = clamp(t, 0.0, 1.0);
+    }
+    if (uLocalInvert[i] > 0.5) mask = 1.0 - mask;
+    return mask;
 }
 
 void main() {
@@ -67,6 +97,21 @@ void main() {
     float minC = min(color.r, min(color.g, color.b));
     float existingSat = maxC - minC;
     color = mix(color, mix(vec3(gray), color, 1.0 + uVibrance), 1.0 - existingSat);
+
+    // 5.5) 부분 보정: 그라디언트/방사형 마스크 영역에만 노출/대비/채도를 추가로 적용.
+    for (int i = 0; i < MAX_LOCAL; i++) {
+        if (i >= uLocalCount) break;
+        float mask = localMask(i, vUv);
+        if (mask <= 0.0) continue;
+        vec3 local = color;
+        vec3 localLinear = srgbToLinear(local);
+        localLinear *= pow(2.0, uLocalExposure[i] * 3.0);
+        local = linearToSrgb(localLinear);
+        local = (local - 0.5) * (1.0 + uLocalContrast[i]) + 0.5;
+        float localGray = luminance(local);
+        local = mix(vec3(localGray), local, 1.0 + uLocalSaturation[i]);
+        color = mix(color, local, mask);
+    }
 
     // 6) 톤커브 (마스터 -> 채널별, 각 채널을 자기 값으로 조회)
     color.r = texture(uCurveLut, vec2(color.r, 0.5)).r;

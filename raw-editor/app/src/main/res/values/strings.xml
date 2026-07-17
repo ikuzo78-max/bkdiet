@@ -30,4 +30,16 @@
     <string name="editor_export_folder_default">기본 위치 (Pictures/RawLab)</string>
     <string name="editor_export_folder_pick">폴더 선택</string>
     <string name="editor_export_folder_reset">기본값으로</string>
+    <string name="editor_local_adjustments">부분 보정</string>
+    <string name="editor_local_add_gradient">그라디언트 추가</string>
+    <string name="editor_local_add_radial">방사형 추가</string>
+    <string name="editor_local_gradient_short">그라디언트</string>
+    <string name="editor_local_radial_short">방사형</string>
+    <string name="editor_local_remove">✕</string>
+    <string name="editor_local_start">시작점</string>
+    <string name="editor_local_end">끝점</string>
+    <string name="editor_local_center">중심</string>
+    <string name="editor_local_radius">반경</string>
+    <string name="editor_local_feather">페더</string>
+    <string name="editor_local_invert">반전</string>
 </resources>

@@ -65,11 +65,100 @@ struct ChannelCurveLut256 {
     }
 };
 
-// 셰이더의 1~6단계(화이트밸런스/노출/하이라이트-섀도우/대비/채도-생동감/톤커브)를 픽셀 하나에 적용.
+constexpr int kMaxLocalAdjustments = 4;
+
+// 부분 보정(그라디언트/방사형) 레이어 하나. adjust.frag의 uLocal* 유니폼 배열과 대응.
+struct LocalAdjustment {
+    bool isRadial = false;
+    // 그라디언트: (startX,startY)=효과 0% 지점, (endX,endY)=효과 100% 지점.
+    // 방사형: (startX,startY)=중심, (endX,endY)=반경(x,y).
+    float startX = 0.f, startY = 0.f, endX = 0.f, endY = 0.f;
+    bool invert = false;
+    float feather = 0.5f;
+    float exposure = 0.f, contrast = 0.f, saturation = 0.f;
+};
+
+// localAdjustmentsIn은 레이어당 10개 float(type,startX,startY,endX,endY,invert,feather,
+// exposure,contrast,saturation)를 이어붙인 배열. EditState.toLocalAdjustmentArray() 참고.
+// 최대 kMaxLocalAdjustments개까지만 읽는다(그 이상은 무시).
+int readLocalAdjustments(JNIEnv *env, jfloatArray localAdjustmentsIn,
+                          LocalAdjustment out[kMaxLocalAdjustments]) {
+    jsize n = env->GetArrayLength(localAdjustmentsIn);
+    int count = std::min(static_cast<int>(n / 10), kMaxLocalAdjustments);
+    if (count <= 0) return 0;
+    std::vector<jfloat> buf(static_cast<size_t>(count) * 10);
+    env->GetFloatArrayRegion(localAdjustmentsIn, 0, static_cast<jsize>(buf.size()), buf.data());
+    for (int i = 0; i < count; ++i) {
+        const jfloat *p = &buf[static_cast<size_t>(i) * 10];
+        out[i].isRadial = p[0] > 0.5f;
+        out[i].startX = p[1];
+        out[i].startY = p[2];
+        out[i].endX = p[3];
+        out[i].endY = p[4];
+        out[i].invert = p[5] > 0.5f;
+        out[i].feather = p[6];
+        out[i].exposure = p[7];
+        out[i].contrast = p[8];
+        out[i].saturation = p[9];
+    }
+    return count;
+}
+
+// adjust.frag의 localMask()와 동일한 공식. u,v는 크롭 영역 기준 0..1(vUv와 동일 좌표계).
+inline float computeLocalMask(const LocalAdjustment &la, float u, float v) {
+    float mask;
+    if (la.isRadial) {
+        float rx = std::max(la.endX, 0.001f);
+        float ry = std::max(la.endY, 0.001f);
+        float dx = (u - la.startX) / rx;
+        float dy = (v - la.startY) / ry;
+        float dist = std::sqrt(dx * dx + dy * dy);
+        mask = 1.f - smoothstepf(1.f - la.feather, 1.f, dist);
+    } else {
+        float dirX = la.endX - la.startX;
+        float dirY = la.endY - la.startY;
+        float lenSq = dirX * dirX + dirY * dirY;
+        float t = lenSq > 0.0001f ? ((u - la.startX) * dirX + (v - la.startY) * dirY) / lenSq : 0.f;
+        mask = clamp01(t);
+    }
+    if (la.invert) mask = 1.f - mask;
+    return mask;
+}
+
+// adjust.frag의 5.5단계와 동일: 레이어를 순서대로 마스크 가중치만큼 섞어 적용한다.
+inline void applyLocalAdjustments(float &r, float &g, float &b, float u, float v,
+                                   const LocalAdjustment *layers, int count) {
+    for (int i = 0; i < count; ++i) {
+        float mask = computeLocalMask(layers[i], u, v);
+        if (mask <= 0.f) continue;
+        float evScale = powf(2.f, layers[i].exposure * 3.f);
+        float lr = powf(std::max(r, 0.f), 2.2f) * evScale;
+        float lg = powf(std::max(g, 0.f), 2.2f) * evScale;
+        float lb = powf(std::max(b, 0.f), 2.2f) * evScale;
+        float er = lr > 0.f ? powf(lr, 1.f / 2.2f) : 0.f;
+        float eg = lg > 0.f ? powf(lg, 1.f / 2.2f) : 0.f;
+        float eb = lb > 0.f ? powf(lb, 1.f / 2.2f) : 0.f;
+        er = (er - 0.5f) * (1.f + layers[i].contrast) + 0.5f;
+        eg = (eg - 0.5f) * (1.f + layers[i].contrast) + 0.5f;
+        eb = (eb - 0.5f) * (1.f + layers[i].contrast) + 0.5f;
+        float lgray = luminance(er, eg, eb);
+        er = lgray + (er - lgray) * (1.f + layers[i].saturation);
+        eg = lgray + (eg - lgray) * (1.f + layers[i].saturation);
+        eb = lgray + (eb - lgray) * (1.f + layers[i].saturation);
+        r = r + (er - r) * mask;
+        g = g + (eg - g) * mask;
+        b = b + (eb - b) * mask;
+    }
+}
+
+// 셰이더의 1~6단계(화이트밸런스/노출/하이라이트-섀도우/대비/채도-생동감/부분보정/톤커브)를
+// 픽셀 하나에 적용. u,v는 크롭 영역 기준 0..1 정규화 좌표(부분 보정 마스크 계산용).
 void adjustPixel(float &r, float &g, float &b,
                   float tempShift, float tintShift, float evScale,
                   float highlights, float shadows, float contrast,
-                  float saturation, float vibrance, const ChannelCurveLut256 &curve) {
+                  float saturation, float vibrance,
+                  float u, float v, const LocalAdjustment *localLayers, int localCount,
+                  const ChannelCurveLut256 &curve) {
     // 1) 화이트 밸런스
     r *= (1.f + tempShift);
     b *= (1.f - tempShift);
@@ -115,6 +204,9 @@ void adjustPixel(float &r, float &g, float &b,
     r = r + (vr - r) * (1.f - existingSat);
     g = g + (vg - g) * (1.f - existingSat);
     b = b + (vb - b) * (1.f - existingSat);
+
+    // 5.5) 부분 보정 (그라디언트/방사형 마스크)
+    applyLocalAdjustments(r, g, b, u, v, localLayers, localCount);
 
     // 6) 톤커브 (마스터 -> 채널별)
     curve.apply(r, g, b);
@@ -318,6 +410,7 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     jfloat highlights, jfloat shadows, jfloat saturation, jfloat vibrance, jfloat sharpen,
     jfloat clarity,
     jfloatArray curvePointsIn,
+    jfloatArray localAdjustmentsIn,
     jfloatArray filmLutIn, jint filmLutSize, jfloat filmLutStrength,
     jfloat cropLeft, jfloat cropTop, jfloat cropRight, jfloat cropBottom,
     jint rotationDegrees,
@@ -330,6 +423,9 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
     float curveMaster[5], curveRed[5], curveGreen[5], curveBlue[5];
     readCurvePoints(env, curvePointsIn, curveMaster, curveRed, curveGreen, curveBlue);
     ChannelCurveLut256 curve(curveMaster, curveRed, curveGreen, curveBlue);
+
+    LocalAdjustment localLayers[kMaxLocalAdjustments];
+    int localCount = readLocalAdjustments(env, localAdjustmentsIn, localLayers);
 
     jsize filmLutLen = env->GetArrayLength(filmLutIn);
     std::vector<float> filmLut(static_cast<size_t>(filmLutLen));
@@ -423,8 +519,10 @@ Java_com_rawlab_editor_raw_RawProcessor_process(
             float r = src[idx] / 255.f;
             float g = src[idx + 1] / 255.f;
             float b = src[idx + 2] / 255.f;
+            float u = cropW > 1 ? static_cast<float>(x - cropLeftPx) / (cropW - 1) : 0.f;
+            float v = cropH > 1 ? static_cast<float>(y - cropTopPx) / (cropH - 1) : 0.f;
             adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
-                        contrast, saturation, vibrance, curve);
+                        contrast, saturation, vibrance, u, v, localLayers, localCount, curve);
 
             if (clarity != 0.f) {
                 float fx = (regionW > 1) ? static_cast<float>(rx) / (regionW - 1) * (clarityBlurW - 1) : 0.f;
@@ -500,6 +598,7 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
     jfloat exposure, jfloat contrast, jfloat temperature, jfloat tint,
     jfloat highlights, jfloat shadows, jfloat saturation, jfloat vibrance,
     jfloatArray curvePointsIn,
+    jfloatArray localAdjustmentsIn,
     jfloatArray filmLutIn, jint filmLutSize, jfloat filmLutStrength,
     jfloat cropLeft, jfloat cropTop, jfloat cropRight, jfloat cropBottom) {
 
@@ -510,6 +609,9 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
     float curveMaster[5], curveRed[5], curveGreen[5], curveBlue[5];
     readCurvePoints(env, curvePointsIn, curveMaster, curveRed, curveGreen, curveBlue);
     ChannelCurveLut256 curve(curveMaster, curveRed, curveGreen, curveBlue);
+
+    LocalAdjustment localLayers[kMaxLocalAdjustments];
+    int localCount = readLocalAdjustments(env, localAdjustmentsIn, localLayers);
 
     jsize filmLutLen = env->GetArrayLength(filmLutIn);
     std::vector<float> filmLut(static_cast<size_t>(filmLutLen));
@@ -526,6 +628,8 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
     int cropTopPx = std::max(0, std::min(static_cast<int>(cropTop * height + 0.5f), height - 1));
     int cropRightPx = std::max(cropLeftPx + 1, std::min(static_cast<int>(cropRight * width + 0.5f), width));
     int cropBottomPx = std::max(cropTopPx + 1, std::min(static_cast<int>(cropBottom * height + 0.5f), height));
+    int cropW = cropRightPx - cropLeftPx;
+    int cropH = cropBottomPx - cropTopPx;
 
     std::vector<jint> bins(768, 0); // [0..255]=R, [256..511]=G, [512..767]=B
 
@@ -535,8 +639,10 @@ Java_com_rawlab_editor_raw_RawProcessor_computeHistogram(
             float r = src[idx] / 255.f;
             float g = src[idx + 1] / 255.f;
             float b = src[idx + 2] / 255.f;
+            float u = cropW > 1 ? static_cast<float>(x - cropLeftPx) / (cropW - 1) : 0.f;
+            float v = cropH > 1 ? static_cast<float>(y - cropTopPx) / (cropH - 1) : 0.f;
             adjustPixel(r, g, b, tempShift, tintShift, evScale, highlights, shadows,
-                        contrast, saturation, vibrance, curve);
+                        contrast, saturation, vibrance, u, v, localLayers, localCount, curve);
             applyFilmLut(r, g, b, filmLutPtr, filmLutSize, filmLutStrength);
             bins[static_cast<int>(clamp01(r) * 255.f + 0.5f)] += 1;
             bins[256 + static_cast<int>(clamp01(g) * 255.f + 0.5f)] += 1;

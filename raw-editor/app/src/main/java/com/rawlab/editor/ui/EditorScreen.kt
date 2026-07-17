@@ -41,7 +41,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.rawlab.editor.R
 import com.rawlab.editor.export.ExportFormat
 import com.rawlab.editor.gl.RawGLRenderer
+import com.rawlab.editor.raw.EditState
 import com.rawlab.editor.raw.FilmSimLut
+import com.rawlab.editor.raw.LocalAdjustment
+import com.rawlab.editor.raw.LocalMaskType
 import com.rawlab.editor.raw.RawProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -85,8 +88,11 @@ fun EditorScreen(viewModel: EditorViewModel) {
         glView?.requestRender()
     }
 
-    // 히스토그램은 슬라이더를 움직일 때마다 다시 계산하면 버벅이므로 살짝 디바운스한다.
     var curveChannel by remember { mutableStateOf(CurveChannel.MASTER) }
+    // 부분 보정 레이어 목록 중 지금 파라미터를 편집 중인 레이어의 인덱스.
+    var selectedLocalIndex by remember { mutableStateOf<Int?>(null) }
+
+    // 히스토그램은 슬라이더를 움직일 때마다 다시 계산하면 버벅이므로 살짝 디바운스한다.
 
     var histogramBins by remember { mutableStateOf<IntArray?>(null) }
     LaunchedEffect(decoded, uiState.editState) {
@@ -100,6 +106,7 @@ fun EditorScreen(viewModel: EditorViewModel) {
                     state.exposure, state.contrast, state.temperature, state.tint,
                     state.highlights, state.shadows, state.saturation, state.vibrance,
                     state.toCurveArray(),
+                    state.toLocalAdjustmentArray(),
                     filmLut, FilmSimLut.LUT_SIZE, state.filmSimStrength,
                     state.cropLeft, state.cropTop, state.cropRight, state.cropBottom,
                 )
@@ -307,6 +314,116 @@ fun EditorScreen(viewModel: EditorViewModel) {
             }
             AdjustSlider(stringResource(R.string.editor_clarity), uiState.editState.clarity) {
                 viewModel.updateEditState(uiState.editState.copy(clarity = it))
+            }
+
+            Text(stringResource(R.string.editor_local_adjustments), style = MaterialTheme.typography.labelMedium)
+            Row {
+                val layers = uiState.editState.localAdjustments
+                val canAdd = layers.size < EditState.MAX_LOCAL_ADJUSTMENTS
+                TextButton(
+                    enabled = canAdd,
+                    onClick = {
+                        viewModel.updateEditState(
+                            uiState.editState.copy(localAdjustments = layers + LocalAdjustment(type = LocalMaskType.GRADIENT))
+                        )
+                        selectedLocalIndex = layers.size
+                    },
+                ) { Text(stringResource(R.string.editor_local_add_gradient)) }
+                TextButton(
+                    enabled = canAdd,
+                    onClick = {
+                        viewModel.updateEditState(
+                            uiState.editState.copy(localAdjustments = layers + LocalAdjustment(type = LocalMaskType.RADIAL))
+                        )
+                        selectedLocalIndex = layers.size
+                    },
+                ) { Text(stringResource(R.string.editor_local_add_radial)) }
+            }
+
+            if (uiState.editState.localAdjustments.isNotEmpty()) {
+                Row(modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())) {
+                    uiState.editState.localAdjustments.forEachIndexed { index, layer ->
+                        val selected = selectedLocalIndex == index
+                        val typeLabel = if (layer.type == LocalMaskType.RADIAL) {
+                            stringResource(R.string.editor_local_radial_short)
+                        } else {
+                            stringResource(R.string.editor_local_gradient_short)
+                        }
+                        TextButton(onClick = { selectedLocalIndex = index }) {
+                            Text(
+                                text = "$typeLabel ${index + 1}",
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                            )
+                        }
+                        TextButton(onClick = {
+                            val next = uiState.editState.localAdjustments.toMutableList().apply { removeAt(index) }
+                            viewModel.updateEditState(uiState.editState.copy(localAdjustments = next))
+                            selectedLocalIndex = when {
+                                selectedLocalIndex == index -> null
+                                (selectedLocalIndex ?: -1) > index -> selectedLocalIndex!! - 1
+                                else -> selectedLocalIndex
+                            }
+                        }) { Text(stringResource(R.string.editor_local_remove)) }
+                    }
+                }
+
+                val selIndex = selectedLocalIndex
+                val layers2 = uiState.editState.localAdjustments
+                if (selIndex != null && selIndex < layers2.size) {
+                    val layer = layers2[selIndex]
+                    fun updateLayer(newLayer: LocalAdjustment) {
+                        val next = layers2.toMutableList().apply { this[selIndex] = newLayer }
+                        viewModel.updateEditState(uiState.editState.copy(localAdjustments = next))
+                    }
+                    val startLabel = if (layer.type == LocalMaskType.RADIAL) {
+                        stringResource(R.string.editor_local_center)
+                    } else {
+                        stringResource(R.string.editor_local_start)
+                    }
+                    val endLabel = if (layer.type == LocalMaskType.RADIAL) {
+                        stringResource(R.string.editor_local_radius)
+                    } else {
+                        stringResource(R.string.editor_local_end)
+                    }
+                    AdjustSlider(label = "$startLabel X", value = layer.startX, valueRange = 0f..1f) {
+                        updateLayer(layer.copy(startX = it))
+                    }
+                    AdjustSlider(label = "$startLabel Y", value = layer.startY, valueRange = 0f..1f) {
+                        updateLayer(layer.copy(startY = it))
+                    }
+                    AdjustSlider(label = "$endLabel X", value = layer.endX, valueRange = 0f..1f) {
+                        updateLayer(layer.copy(endX = it))
+                    }
+                    AdjustSlider(label = "$endLabel Y", value = layer.endY, valueRange = 0f..1f) {
+                        updateLayer(layer.copy(endY = it))
+                    }
+                    if (layer.type == LocalMaskType.RADIAL) {
+                        AdjustSlider(
+                            label = stringResource(R.string.editor_local_feather),
+                            value = layer.feather,
+                            valueRange = 0.01f..0.99f,
+                        ) { updateLayer(layer.copy(feather = it)) }
+                    }
+                    TextButton(onClick = { updateLayer(layer.copy(invert = !layer.invert)) }) {
+                        Text(
+                            text = stringResource(R.string.editor_local_invert),
+                            fontWeight = if (layer.invert) FontWeight.Bold else FontWeight.Normal,
+                            color = if (layer.invert) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                        )
+                    }
+                    AdjustSlider(stringResource(R.string.editor_exposure), layer.exposure) {
+                        updateLayer(layer.copy(exposure = it))
+                    }
+                    AdjustSlider(stringResource(R.string.editor_contrast), layer.contrast) {
+                        updateLayer(layer.copy(contrast = it))
+                    }
+                    AdjustSlider(stringResource(R.string.editor_saturation), layer.saturation) {
+                        updateLayer(layer.copy(saturation = it))
+                    }
+                }
             }
         }
 
