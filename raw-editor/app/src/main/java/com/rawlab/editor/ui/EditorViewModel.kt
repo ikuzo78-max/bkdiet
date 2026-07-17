@@ -13,7 +13,7 @@ import com.rawlab.editor.export.ExportPrefs
 import com.rawlab.editor.export.Exporter
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
-import com.rawlab.editor.raw.RawDecoder
+import com.rawlab.editor.raw.SourceImageDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,9 +60,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val displayName = queryDisplayName(uri) ?: "rawlab"
             val decoded = withContext(Dispatchers.IO) {
                 runCatching {
-                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                        RawDecoder.decode(pfd.fd, PREVIEW_MAX_DIMENSION)
-                    }
+                    SourceImageDecoder.decode(context, uri, displayName, PREVIEW_MAX_DIMENSION)
                 }.getOrNull()
             }
             if (decoded == null) {

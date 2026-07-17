@@ -2,9 +2,10 @@
 
 안드로이드 네이티브 RAW 이미지 편집 앱 (v0.1, MVP).
 
-Kotlin + Jetpack Compose UI, LibRaw(NDK/JNI)로 RAW 디코딩, OpenGL ES 3.0 셰이더로
-실시간 프리뷰 편집(노출/대비/화이트밸런스/하이라이트-섀도우/채도-생동감/샤픈/텍스처-클래리티/
-부분 보정)과 크롭/회전, JPEG export를 지원합니다.
+Kotlin + Jetpack Compose UI, LibRaw(NDK/JNI)로 RAW 디코딩(+ 안드로이드 표준
+BitmapFactory로 JPEG도 디코딩), OpenGL ES 3.0 셰이더로 실시간 프리뷰 편집(노출/대비/
+화이트밸런스/하이라이트-섀도우/채도-생동감/샤픈/텍스처-클래리티/부분 보정)과 크롭/회전,
+JPEG export를 지원합니다.
 
 후지필름 GFX100RF(1억 화소 medium format, RAF)처럼 PC 없이 모바일에서만
 RAW를 촬영/보정하려는 워크플로를 염두에 두고 설계했습니다 — 그래서 프리뷰와
@@ -57,8 +58,11 @@ app/src/main/
                         # 히스토그램 계산도 여기서 담당
   java/com/rawlab/editor/
     MainActivity.kt
-    raw/RawDecoder.kt     # JNI 디코더 래퍼
-    raw/DecodedRaw.kt     # 디코드 결과 (width, height, RGB8 pixels)
+    raw/RawDecoder.kt     # JNI 디코더 래퍼 (LibRaw, RAW 전용)
+    raw/JpegDecoder.kt    # BitmapFactory 기반 JPEG 디코더 (EXIF Orientation 보정)
+    raw/SourceImageDecoder.kt # 확장자로 RAW/JPEG 구분해 RawDecoder/JpegDecoder로 위임
+    raw/DecodedRaw.kt     # 디코드 결과 (width, height, RGB8 pixels) — 출처가 RAW든
+                          # JPEG이든 이 형식으로 통일되어 이후 파이프라인은 구분하지 않음
     raw/RawProcessor.kt   # JNI 전체해상도 보정/히스토그램 래퍼
     raw/ProcessedImage.kt # 보정 결과 (width, height, ARGB8888 pixels)
     raw/EditState.kt      # 비파괴 편집 파라미터 (톤커브/필름시뮬레이션 포함)
@@ -101,10 +105,12 @@ GFX100RF는 약 1억 화소(11648×8736)입니다. 이 해상도를 그대로 GP
 RGB8 버퍼만 ~300MB고, 보급형/구형 기기의 `GL_MAX_TEXTURE_SIZE`(보통 4096~8192)를
 넘어서 프리뷰 자체가 실패하거나 매우 느려질 수 있습니다. 그래서:
 
-- **프리뷰**: `RawDecoder.decode(fd, maxDimensionPx=2048)` — LibRaw `half_size` +
-  박스 다운샘플로 긴 변을 2048px 이하로 줄인 프록시를 GPU 셰이더로 실시간 편집.
-- **export**: `RawDecoder.decode(fd, 0)`으로 원본 파일을 다시 전체 해상도로
-  디코드하고, `RawProcessor.process(...)`가 **adjust.frag와 동일한 보정 공식을
+- **프리뷰**: `SourceImageDecoder.decode(..., maxDimensionPx=2048)` — RAW는 LibRaw
+  `half_size` + 박스 다운샘플로, JPEG은 `BitmapFactory`의 `inSampleSize`로 각각
+  디코드 단계에서부터 긴 변을 2048px 이하로 줄인 프록시를 만들어 GPU 셰이더로
+  실시간 편집.
+- **export**: `SourceImageDecoder.decode(..., maxDimensionPx=0)`으로 원본 파일을
+  다시 전체 해상도로 디코드하고, `RawProcessor.process(...)`가 **adjust.frag와 동일한 보정 공식을
   CPU/네이티브 코드로 재현**해서 크롭/회전까지 적용합니다. GPU를 거치지 않으므로
   기기의 텍스처 크기 제한과 무관하게 **항상 원본 해상도로 저장**됩니다(사용자가
   명시적으로 선택한 방식).
@@ -112,6 +118,22 @@ RGB8 버퍼만 ~300MB고, 보급형/구형 기기의 `GL_MAX_TEXTURE_SIZE`(보�
   기기 메모리를 GB 단위로 사용할 수 있음). 저장 버튼을 누른 뒤 처리에 시간이 걸릴 수
   있고(수 초~수십 초, 기기 성능에 따라 다름), 저장 중에는 버튼이 "저장 중…"으로
   바뀝니다. 메모리가 부족한 저사양 기기에서는 export가 실패할 수 있습니다.
+
+### JPEG도 편집할 수 있다
+
+RAW 외에 이미 데모자이킹된 JPEG(.jpg/.jpeg) 파일도 열어서 똑같이 보정/저장할 수
+있다. `SourceImageDecoder`가 파일 확장자로 RAW/JPEG을 구분해, RAW는 기존대로
+LibRaw(JNI)로, JPEG은 안드로이드 표준 `BitmapFactory`로 디코드한 뒤 둘 다 동일한
+`DecodedRaw`(RGB8) 형식으로 통일해서 돌려준다 — 그 다음 GPU 프리뷰/CPU export
+파이프라인은 원본이 RAW든 JPEG이든 전혀 신경 쓰지 않는다.
+
+- JPEG은 파일에 EXIF Orientation 태그로만 회전 정보가 기록되고 픽셀 자체는
+  옆으로 누운 채 저장된 경우가 흔해서, `JpegDecoder`가 그 태그를 읽어 항상 올바른
+  방향으로 보이도록 회전/반전을 적용한 뒤 돌려준다.
+- 프리뷰는 `BitmapFactory`의 `inSampleSize`로 디코드 단계에서부터 축소해서 큰
+  원본도 전체 해상도 비트맵을 만들지 않고 안전하게 처리한다. export(전체 해상도)는
+  RAW export와 동일한 트레이드오프를 그대로 적용받는다 — 아주 큰 JPEG(예: 1억 화소급
+  스캔/합성 이미지)이라면 마찬가지로 CPU/메모리 사용량이 커질 수 있다.
 
 ### 텍스처/클래리티는 왜 넓은 반경 블러를 매 픽셀 계산하지 않는가
 
@@ -164,7 +186,9 @@ export에서 노이즈 리덕션(bilateral 등)과 똑같은 시간/메모리 �
 - LibRaw는 `NO_JPEG`(손실 JPEG 압축 RAW 미지원), `NO_LCMS`(ICC 프로파일 미지원),
   `NO_JASPER`(JPEG2000 미지원) 옵션으로 빌드됩니다. 즉 **비압축/무손실압축 RAF/DNG**
   는 잘 동작하지만, 손실 JPEG 압축을 쓰는 일부 RAW는 디코딩되지 않습니다.
-  필요해지면 libjpeg-turbo를 NDK로 추가 빌드해 `NO_JPEG`를 해제하면 됩니다.
+  필요해지면 libjpeg-turbo를 NDK로 추가 빌드해 `NO_JPEG`를 해제하면 됩니다(이 제약은
+  LibRaw의 RAW 디코딩 경로에만 해당하고, `.jpg`/`.jpeg` 파일 자체는 안드로이드 표준
+  `BitmapFactory`로 디코드하므로 영향받지 않습니다).
 - 크롭은 데이터 모델(`EditState`)과 렌더링(프리뷰 셰이더 UV, export 캔버스 크기)까지는
   구현되어 있지만, 드래그로 크롭 영역을 지정하는 UI는 아직 없습니다(회전 버튼만 제공).
 - 톤커브는 마스터(RGB 통합) + R/G/B 개별 채널까지 4세트(각 5점, 구간별 선형보간) 지원.

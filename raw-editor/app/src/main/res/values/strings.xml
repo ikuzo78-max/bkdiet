@@ -2,8 +2,8 @@
 <resources>
     <string name="app_name">RawLab</string>
     <string name="home_title">RawLab</string>
-    <string name="home_pick_raw">RAW 파일 열기</string>
-    <string name="home_pick_raw_hint">.dng, .cr2, .nef, .arw, .raf, .orf, .rw2 지원</string>
+    <string name="home_pick_raw">사진 파일 열기</string>
+    <string name="home_pick_raw_hint">.dng, .cr2, .nef, .arw, .raf, .orf, .rw2, .jpg, .jpeg 지원</string>
     <string name="editor_export">저장</string>
     <string name="editor_exporting">저장 중…</string>
     <string name="editor_exposure">노출</string>
@@ -21,7 +21,7 @@
     <string name="editor_reset">초기화</string>
     <string name="export_success">저장 완료</string>
     <string name="export_failure">저장 실패</string>
-    <string name="decode_failure">RAW 디코딩 실패</string>
+    <string name="decode_failure">이미지 디코딩 실패</string>
     <string name="editor_curve">톤커브</string>
     <string name="editor_histogram">히스토그램</string>
     <string name="editor_film_simulation">필름 시뮬레이션</string>

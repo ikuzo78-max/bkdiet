@@ -10,16 +10,17 @@ import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import com.rawlab.editor.raw.EditState
 import com.rawlab.editor.raw.FilmSimLut
-import com.rawlab.editor.raw.RawDecoder
 import com.rawlab.editor.raw.RawProcessor
+import com.rawlab.editor.raw.SourceImageDecoder
 import java.io.File
 
 /**
- * [uri]의 RAW 파일을 원본 해상도로 다시 디코드하고, RawProcessor(네이티브 CPU)로
- * 프리뷰와 동일한 보정/크롭/회전을 전체 해상도에 적용한 뒤 지정 포맷으로 저장한다.
+ * [uri]의 RAW/JPEG 파일을 원본 해상도로 다시 디코드하고(SourceImageDecoder가 확장자로
+ * RAW/JPEG을 구분해 적절한 디코더로 위임), RawProcessor(네이티브 CPU)로 프리뷰와 동일한
+ * 보정/크롭/회전을 전체 해상도에 적용한 뒤 지정 포맷으로 저장한다.
  *
  * GPU 셰이더가 아니라 CPU/네이티브로 처리하는 이유: GFX100RF(1억 화소)처럼 기기의
- * GL_MAX_TEXTURE_SIZE를 넘어서는 대형 센서 RAW도 항상 원본 해상도 그대로 저장을
+ * GL_MAX_TEXTURE_SIZE를 넘어서는 대형 센서 원본도 항상 원본 해상도 그대로 저장을
  * 보장하기 위함이다.
  *
  * [destinationTree]가 null이면 MediaStore(Pictures/RawLab)에 저장하고, 아니면
@@ -36,9 +37,8 @@ object Exporter {
         format: ExportFormat,
         destinationTree: Uri?,
     ): String {
-        val decoded = context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-            RawDecoder.decode(pfd.fd, 0)
-        } ?: error("전체 해상도 RAW 디코딩 실패")
+        val decoded = SourceImageDecoder.decode(context, uri, sourceDisplayName, 0)
+            ?: error("전체 해상도 이미지 디코딩 실패")
 
         val filmLut = FilmSimLut.load(context, editState.filmSimulation) ?: FloatArray(0)
         val processed = RawProcessor.process(
