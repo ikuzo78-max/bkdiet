@@ -134,6 +134,12 @@ LibRaw(JNI)로, JPEG은 안드로이드 표준 `BitmapFactory`로 디코드한 �
   원본도 전체 해상도 비트맵을 만들지 않고 안전하게 처리한다. export(전체 해상도)는
   RAW export와 동일한 트레이드오프를 그대로 적용받는다 — 아주 큰 JPEG(예: 1억 화소급
   스캔/합성 이미지)이라면 마찬가지로 CPU/메모리 사용량이 커질 수 있다.
+- `Bitmap.getPixels()`를 이미지 전체 한 번에 부르면 ARGB Bitmap(4바이트/px)에 더해
+  같은 크기의 IntArray(4바이트/px)까지 동시에 떠 있게 되어, 요즘 폰 카메라가 흔히
+  찍는 수십 MP급 JPEG만으로도 export가 OOM으로 실패하는 문제가 있었다. 지금은
+  `JpegDecoder`가 몇백 줄 단위 스트립으로 나눠 작은 IntArray만 재사용하며 처리해
+  이 문제를 없앴고, `AndroidManifest.xml`에 `android:largeHeap="true"`도 추가해
+  여유를 더 뒀다.
 
 ### 텍스처/클래리티는 왜 넓은 반경 블러를 매 픽셀 계산하지 않는가
 

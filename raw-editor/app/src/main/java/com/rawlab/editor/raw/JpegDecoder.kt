@@ -14,6 +14,9 @@ import java.io.ByteArrayInputStream
  */
 object JpegDecoder {
 
+    /** getPixels() 스트립 하나당 대략 이 정도 바이트 예산으로 IntArray 크기를 정한다. */
+    private const val STRIP_BUDGET_BYTES = 8 * 1024 * 1024
+
     /**
      * [bytes]는 JPEG 파일 전체 내용. [maxDimensionPx] > 0이면 BitmapFactory의
      * inSampleSize로 디코드 단계에서부터 그 값 이하로 축소한 프록시를 반환한다(프리뷰용,
@@ -86,18 +89,30 @@ object JpegDecoder {
 
         val width = bitmap.width
         val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        bitmap.recycle()
-
         val rgb = ByteArray(width * height * 3)
-        for (i in pixels.indices) {
-            val p = pixels[i]
-            val o = i * 3
-            rgb[o] = ((p shr 16) and 0xFF).toByte()
-            rgb[o + 1] = ((p shr 8) and 0xFF).toByte()
-            rgb[o + 2] = (p and 0xFF).toByte()
+
+        // bitmap.getPixels()를 이미지 전체 한 번에 부르면 ARGB Bitmap(4바이트/px)에 더해
+        // 같은 크기의 IntArray(4바이트/px)까지 동시에 떠 있게 되어, 큰 사진(요즘 폰
+        // 카메라는 수십 MP도 흔함)에서 export 시 OOM으로 저장이 실패할 수 있었다.
+        // 몇백 줄 단위 스트립으로 나눠 작은 IntArray만 재사용하면서 처리한다.
+        val stripRows = (STRIP_BUDGET_BYTES / (width * 4)).coerceIn(1, height)
+        val stripBuffer = IntArray(width * stripRows)
+        var y = 0
+        var outIdx = 0
+        while (y < height) {
+            val rows = minOf(stripRows, height - y)
+            bitmap.getPixels(stripBuffer, 0, width, 0, y, width, rows)
+            val count = width * rows
+            for (i in 0 until count) {
+                val p = stripBuffer[i]
+                rgb[outIdx] = ((p shr 16) and 0xFF).toByte()
+                rgb[outIdx + 1] = ((p shr 8) and 0xFF).toByte()
+                rgb[outIdx + 2] = (p and 0xFF).toByte()
+                outIdx += 3
+            }
+            y += rows
         }
+        bitmap.recycle()
         return DecodedRaw(width, height, rgb)
     }
 }
