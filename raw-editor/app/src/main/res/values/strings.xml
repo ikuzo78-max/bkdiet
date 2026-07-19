@@ -42,4 +42,11 @@
     <string name="editor_local_radius">반경</string>
     <string name="editor_local_feather">페더</string>
     <string name="editor_local_invert">반전</string>
+    <string name="editor_switch_photo">사진 교체</string>
+    <string name="editor_preset_settings">설정 저장/불러오기</string>
+    <string name="editor_preset_save">현재 설정 저장</string>
+    <string name="editor_preset_load">저장된 설정 불러오기</string>
+    <string name="editor_preset_saved">현재 설정을 저장했습니다</string>
+    <string name="editor_preset_loaded">저장된 설정을 불러왔습니다</string>
+    <string name="editor_preset_none">저장된 설정이 없습니다</string>
 </resources>

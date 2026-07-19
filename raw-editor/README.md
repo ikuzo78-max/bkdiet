@@ -66,13 +66,14 @@ app/src/main/
     raw/RawProcessor.kt   # JNI 전체해상도 보정/히스토그램 래퍼
     raw/ProcessedImage.kt # 보정 결과 (width, height, ARGB8888 pixels)
     raw/EditState.kt      # 비파괴 편집 파라미터 (톤커브/필름시뮬레이션 포함)
+    raw/EditStatePrefs.kt # EditState 저장/불러오기 1슬롯 (SharedPreferences, JSON)
     raw/CurveLut.kt       # 톤커브 5점 -> 256단계 LUT (마스터+R/G/B 채널별, 구간별 선형보간, GL 텍스처용)
     raw/FilmSimLut.kt     # .cube 파싱(+캐시), 필름 시뮬레이션 3D LUT
     gl/RawGLRenderer.kt   # GLSurfaceView.Renderer, 실시간 프리뷰(프록시 해상도)
     gl/ShaderUtils.kt     # 셰이더 컴파일/링크 공용 헬퍼
     ui/HomeScreen.kt       # SAF로 RAW 파일 선택
     ui/EditorScreen.kt     # 프리뷰(핀치줌/드래그) + 슬라이더 + 필름시뮬레이션 + 톤커브 +
-                           # 히스토그램 + 회전/저장설정/export
+                           # 히스토그램 + 회전/저장설정/export + 사진 교체 + 설정 저장·불러오기
     ui/CurveEditor.kt      # 5점 드래그 톤커브 에디터 (Canvas, 채널별 색상 표시)
     ui/HistogramView.kt    # RGB 히스토그램 오버레이 (Canvas)
     ui/EditorViewModel.kt  # 원본 Uri 보관, 프리뷰/export 트리거
@@ -181,6 +182,22 @@ export에서 노이즈 리덕션(bilateral 등)과 똑같은 시간/메모리 �
   저장된다"를 유지한다. 마스크 좌표는 크롭 영역 기준 0..1 정규화 값이라
   이미지를 회전해도 마스크가 사진 내용과 함께 회전한다.
 
+### 다른 사진으로 교체하기 / 편집 설정 저장·불러오기
+
+편집 화면 설정 패널 맨 위에 두 기능이 있다.
+
+- **사진 교체**: 앱을 재시작하지 않고 SAF 파일 선택기로 다른 RAW/JPEG 파일을 열 수
+  있다. `EditorViewModel.openRaw()`를 다시 호출하는 것뿐이라 HomeScreen에서 처음
+  여는 것과 동일하게 동작하고, 편집 설정은 새 사진에 맞게 기본값으로 초기화된다.
+- **설정 저장/불러오기**: 지금 다이얼로 조정한 노출/대비/톤커브/필름시뮬레이션/
+  부분 보정 등 EditState 전체를 "설정 저장" 버튼으로 SharedPreferences에 JSON으로
+  저장해두고, 나중에(다른 사진을 연 뒤에도) "저장된 설정 불러오기"로 그대로 다시
+  적용할 수 있다. 여러 개의 이름 붙은 프리셋이 아니라 "마지막으로 저장한 설정"
+  한 슬롯만 기억하는 단순한 형태다(라이트룸의 "설정 복사/붙여넣기"와 비슷한 용도).
+  사진을 교체해도 편집 설정이 자동으로 넘어가지 않는 것은 의도한 동작이다 —
+  새 사진은 항상 깨끗한 상태로 시작하고, 이전 설정을 쓰고 싶을 때만 명시적으로
+  "불러오기"를 누르게 했다.
+
 ## 알려진 제약 / v0.1 범위 밖 (로드맵)
 
 - **이 환경(샌드박스)에서는 실제 빌드/실행 검증을 하지 못했습니다.** Android
@@ -211,6 +228,9 @@ export에서 노이즈 리덕션(bilateral 등)과 똑같은 시간/메모리 �
 - 저장 시 포맷(JPEG/PNG)과 저장 폴더(SAF `ACTION_OPEN_DOCUMENT_TREE`, 미선택 시
   기본값 `Pictures/RawLab`)를 고를 수 있다. 마지막 선택은 앱 재실행 후에도 유지된다
   (`ExportPrefs`, `SharedPreferences` 기반).
+- 편집 설정 저장/불러오기는 이름 붙은 프리셋 여러 개가 아니라 "마지막으로 저장한
+  설정" 한 슬롯만 지원한다(`EditStatePrefs`). 여러 프리셋을 만들고 이름 붙여
+  관리하는 기능은 아직 없음.
 - 데이트 스탬프, 즐겨찾기/필터, 배치 처리, 16bit 선형 파이프라인, 자동 테스트/CI는
   아직 없음.
 - 디헤이즈, 노이즈 리덕션, EV 브라케팅 HDR 합성은 아직 없음 — 특히 노이즈

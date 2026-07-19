@@ -78,6 +78,9 @@ fun EditorScreen(viewModel: EditorViewModel) {
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) viewModel.setExportFolder(uri)
     }
+    val switchPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) viewModel.openRaw(uri)
+    }
 
     LaunchedEffect(decoded) {
         renderer.submitImage(decoded)
@@ -191,6 +194,22 @@ fun EditorScreen(viewModel: EditorViewModel) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
+            Row {
+                TextButton(onClick = { switchPhotoPicker.launch(arrayOf("*/*")) }) {
+                    Text(stringResource(R.string.editor_switch_photo))
+                }
+            }
+
+            Text(stringResource(R.string.editor_preset_settings), style = MaterialTheme.typography.labelMedium)
+            Row {
+                TextButton(onClick = { viewModel.saveEditPreset() }) {
+                    Text(stringResource(R.string.editor_preset_save))
+                }
+                TextButton(onClick = { viewModel.loadEditPreset() }, enabled = viewModel.hasSavedPreset()) {
+                    Text(stringResource(R.string.editor_preset_load))
+                }
+            }
+
             Text(stringResource(R.string.editor_export_settings), style = MaterialTheme.typography.labelMedium)
             Row {
                 ExportFormat.entries.forEach { format ->

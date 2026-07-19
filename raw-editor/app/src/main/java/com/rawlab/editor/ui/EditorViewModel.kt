@@ -13,6 +13,7 @@ import com.rawlab.editor.export.ExportPrefs
 import com.rawlab.editor.export.Exporter
 import com.rawlab.editor.raw.DecodedRaw
 import com.rawlab.editor.raw.EditState
+import com.rawlab.editor.raw.EditStatePrefs
 import com.rawlab.editor.raw.SourceImageDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,8 +65,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }.getOrNull()
             }
             if (decoded == null) {
+                // errorMessage는 HomeScreen에서만 표시되므로, 이미 EditorScreen에 있는 상태에서
+                // "사진 교체"가 실패한 경우에도 사용자가 알 수 있도록 exportMessage로도 알린다.
                 _uiState.update {
-                    it.copy(isLoading = false, errorMessage = context.getString(R.string.decode_failure))
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = context.getString(R.string.decode_failure),
+                        exportMessage = context.getString(R.string.decode_failure),
+                    )
                 }
             } else {
                 _uiState.update {
@@ -131,6 +138,28 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun consumeExportMessage() {
         _uiState.update { it.copy(exportMessage = null) }
     }
+
+    /** 현재 편집 설정을 저장해둔다(다른 사진에도 다시 적용할 수 있도록). */
+    fun saveEditPreset() {
+        val context = getApplication<Application>()
+        EditStatePrefs.save(context, _uiState.value.editState)
+        _uiState.update { it.copy(exportMessage = context.getString(R.string.editor_preset_saved)) }
+    }
+
+    /** 저장해둔 편집 설정을 현재(다른 사진일 수 있음) 화면에 적용한다. */
+    fun loadEditPreset() {
+        val context = getApplication<Application>()
+        val saved = EditStatePrefs.load(context)
+        _uiState.update {
+            if (saved != null) {
+                it.copy(editState = saved, exportMessage = context.getString(R.string.editor_preset_loaded))
+            } else {
+                it.copy(exportMessage = context.getString(R.string.editor_preset_none))
+            }
+        }
+    }
+
+    fun hasSavedPreset(): Boolean = EditStatePrefs.hasSaved(getApplication())
 
     fun setExportFormat(format: ExportFormat) {
         ExportPrefs.setFormat(getApplication<Application>(), format)
